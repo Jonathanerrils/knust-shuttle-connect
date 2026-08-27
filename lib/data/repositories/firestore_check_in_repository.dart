@@ -24,10 +24,16 @@ class FirestoreCheckInRepository implements CheckInRepository {
       );
 
   @override
-  Future<void> checkIn({required String uid, required BusStop stop}) {
+  Future<void> checkIn({
+    required String uid,
+    required BusStop stop,
+    required BusStop destination,
+  }) {
     return _doc(uid).set(<String, dynamic>{
       'stopId': stop.id,
       'stopName': stop.name,
+      'destinationStopId': destination.id,
+      'destinationStopName': destination.name,
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
       'expiresAt': Timestamp.fromDate(
