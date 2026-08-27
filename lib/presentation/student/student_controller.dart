@@ -25,7 +25,7 @@ class StudentController extends ChangeNotifier {
   final CheckInRepository _checkIns;
   final ShuttleRepository _shuttles;
   final CheckInAtStop _checkInAtStop;
-  final CancelCheckIn _cancelCheckIn;
+  final CompleteCheckIn _completeCheckIn;
 
   StreamSubscription<List<BusStop>>? _stopsSub;
   StreamSubscription<CheckIn?>? _checkInSub;
@@ -51,7 +51,7 @@ class StudentController extends ChangeNotifier {
         _checkIns = checkInRepository,
         _shuttles = shuttleRepository,
         _checkInAtStop = CheckInAtStop(checkInRepository),
-        _cancelCheckIn = CancelCheckIn(checkInRepository) {
+        _completeCheckIn = CompleteCheckIn(checkInRepository) {
     _init();
   }
 
@@ -105,6 +105,20 @@ class StudentController extends ChangeNotifier {
     if (checkIn == null || stop == null) return 0;
     return stop.demandForDestination(checkIn.destinationStopId);
   }
+
+  String? get activeDestinationStopId =>
+      myCheckIn?.destinationStopId ?? selectedDestinationStopId;
+
+  List<Shuttle> get compatibleShuttles {
+    final destinationId = activeDestinationStopId;
+    if (destinationId == null) return const <Shuttle>[];
+    return shuttles
+        .where((shuttle) => shuttle.canServeDestination(destinationId))
+        .toList();
+  }
+
+  List<Shuttle> get assignmentUnknownShuttles =>
+      shuttles.where((shuttle) => !shuttle.hasServiceAssignment).toList();
 
   Future<void> _init() async {
     stops = await _stops.getCachedStops();
@@ -191,18 +205,37 @@ class StudentController extends ChangeNotifier {
     }
   }
 
-  Future<String?> boardOrCancel() async {
+  Future<String?> markBoarded() => _completeWaiting(WaitingEndReason.boarded);
+
+  Future<String?> cancelWaiting() =>
+      _completeWaiting(WaitingEndReason.cancelled);
+
+  Future<String?> _completeWaiting(WaitingEndReason reason) async {
     final current = myCheckIn;
+    if (current == null) return null;
     workingOnCheckIn = true;
     notifyListeners();
     try {
-      final result = await _cancelCheckIn(student.uid);
+      final result = await _completeCheckIn(student.uid, reason);
       if (result.isFailure) return result.error;
-      if (current != null) {
-        unawaited(FirebaseMessaging.instance
-            .unsubscribeFromTopic(AppConstants.stopTopic(current.stopId)));
-      }
+      unawaited(FirebaseMessaging.instance
+          .unsubscribeFromTopic(AppConstants.stopTopic(current.stopId)));
       return null;
+    } finally {
+      workingOnCheckIn = false;
+      notifyListeners();
+    }
+  }
+
+  Future<String?> reportMissedBoarding() async {
+    if (myCheckIn == null) return null;
+    workingOnCheckIn = true;
+    notifyListeners();
+    try {
+      await _checkIns.reportMissedBoarding(student.uid);
+      return null;
+    } catch (e) {
+      return 'Could not record that the shuttle was full. ($e)';
     } finally {
       workingOnCheckIn = false;
       notifyListeners();
@@ -226,7 +259,7 @@ class StudentController extends ChangeNotifier {
       final exitThreshold =
           stop.geofenceRadiusMeters + AppConstants.geofenceExitBufferMeters;
       if (distance > exitThreshold) {
-        unawaited(boardOrCancel());
+        unawaited(_completeWaiting(WaitingEndReason.geofenceExited));
       }
     });
   }
@@ -251,9 +284,10 @@ class StudentController extends ChangeNotifier {
 
   int? get etaMinutesToMyStop {
     final stop = checkedInStop;
-    if (stop == null || shuttles.isEmpty) return null;
+    final candidates = compatibleShuttles;
+    if (stop == null || candidates.isEmpty) return null;
     double best = double.infinity;
-    for (final shuttle in shuttles) {
+    for (final shuttle in candidates) {
       final eta = shuttle.etaMinutesTo(stop.latitude, stop.longitude);
       if (eta < best) best = eta;
     }
