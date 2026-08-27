@@ -98,7 +98,7 @@ class _DriverDashboardViewState extends State<_DriverDashboardView> {
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
             child: DropdownButtonFormField<String?>(
-              value: controller.selectedDestinationStopId,
+              initialValue: controller.selectedDestinationStopId,
               decoration: const InputDecoration(
                 labelText: 'Destination / corridor you are serving',
                 border: OutlineInputBorder(),
