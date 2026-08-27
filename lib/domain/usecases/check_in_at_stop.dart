@@ -12,10 +12,15 @@ class CheckInAtStop {
   Future<Result<void>> call({
     required String uid,
     required BusStop stop,
+    required BusStop destination,
     required double latitude,
     required double longitude,
     DateTime? lastActionAt,
   }) async {
+    if (stop.id == destination.id) {
+      return const Result.failure('Choose a destination different from your boarding stop.');
+    }
+
     if (lastActionAt != null &&
         DateTime.now().difference(lastActionAt) < AppConstants.checkInCooldown) {
       final wait = AppConstants.checkInCooldown -
@@ -39,7 +44,11 @@ class CheckInAtStop {
     }
 
     try {
-      await _checkIns.checkIn(uid: uid, stop: stop);
+      await _checkIns.checkIn(
+        uid: uid,
+        stop: stop,
+        destination: destination,
+      );
       return const Result.success(null);
     } catch (e) {
       return Result.failure('Could not check in. Please try again. ($e)');
