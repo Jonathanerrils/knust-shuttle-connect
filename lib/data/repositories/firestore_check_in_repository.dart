@@ -18,7 +18,7 @@ class FirestoreCheckInRepository implements CheckInRepository {
   Stream<CheckIn?> watchMyCheckIn(String uid) => _doc(uid).snapshots().map(
         (doc) {
           final checkIn = CheckInModel.fromDoc(doc);
-          if (checkIn == null || checkIn.isExpired) return null;
+          if (checkIn == null || !checkIn.isActive) return null;
           return checkIn;
         },
       );
@@ -29,8 +29,6 @@ class FirestoreCheckInRepository implements CheckInRepository {
     required BusStop stop,
     required BusStop destination,
   }) {
-    // Firestore auto IDs provide a random journey identifier that can be used
-    // in analytics without exposing the student's Firebase uid.
     final journeyId = _db.collection('analytics_events').doc().id;
     return _doc(uid).set(<String, dynamic>{
       'journeyId': journeyId,
@@ -47,5 +45,14 @@ class FirestoreCheckInRepository implements CheckInRepository {
   }
 
   @override
-  Future<void> cancel(String uid) => _doc(uid).delete();
+  Future<void> complete({
+    required String uid,
+    required WaitingEndReason reason,
+  }) {
+    return _doc(uid).update(<String, dynamic>{
+      'endReason': reason.name,
+      'endedAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
 }
