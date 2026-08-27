@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../../domain/entities/occupancy.dart';
 import '../../domain/entities/shuttle.dart';
 import '../../domain/repositories/shuttle_repository.dart';
 
@@ -26,6 +27,12 @@ class FirestoreShuttleRepository implements ShuttleRepository {
     final lat = (data?['latitude'] as num?)?.toDouble();
     final lng = (data?['longitude'] as num?)?.toDouble();
     if (lat == null || lng == null) return null;
+
+    final rawBand = data?['driverOccupancyBand'] as String?;
+    final occupancyBand = rawBand == null
+        ? null
+        : OccupancyBand.values.where((b) => b.name == rawBand).firstOrNull;
+
     return Shuttle(
       id: doc.id,
       latitude: lat,
@@ -38,8 +45,12 @@ class FirestoreShuttleRepository implements ShuttleRepository {
       routeId: data?['routeId'] as String?,
       tripId: data?['tripId'] as String?,
       routeDirection: data?['routeDirection'] as String?,
-      currentStopSequence:
-          (data?['currentStopSequence'] as num?)?.toInt(),
+      currentStopSequence: (data?['currentStopSequence'] as num?)?.toInt(),
+      driverOccupancyBand: occupancyBand,
+      occupancyReportedAt:
+          (data?['occupancyReportedAt'] as Timestamp?)?.toDate(),
+      trackedOnboardCount: (data?['trackedOnboardCount'] as num?)?.toInt(),
+      safeCapacity: (data?['safeCapacity'] as num?)?.toInt(),
     );
   }
 }
