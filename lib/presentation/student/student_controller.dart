@@ -40,6 +40,7 @@ class StudentController extends ChangeNotifier {
   List<Shuttle> shuttles = const [];
   String? locationError;
   bool workingOnCheckIn = false;
+  String? selectedDestinationStopId;
 
   StudentController({
     required this.student,
@@ -70,6 +71,25 @@ class StudentController extends ChangeNotifier {
     return best;
   }
 
+  BusStop? get selectedDestination {
+    final id = selectedDestinationStopId;
+    if (id == null) return null;
+    for (final stop in stops) {
+      if (stop.id == id) return stop;
+    }
+    return null;
+  }
+
+  List<BusStop> destinationsFor(BusStop? boardingStop) => stops
+      .where((stop) => stop.active && stop.id != boardingStop?.id)
+      .toList()
+    ..sort((a, b) => a.name.compareTo(b.name));
+
+  void selectDestination(String? stopId) {
+    selectedDestinationStopId = stopId;
+    notifyListeners();
+  }
+
   BusStop? get checkedInStop {
     final c = myCheckIn;
     if (c == null) return null;
@@ -77,6 +97,13 @@ class StudentController extends ChangeNotifier {
       if (stop.id == c.stopId) return stop;
     }
     return null;
+  }
+
+  int get peopleGoingMyWay {
+    final checkIn = myCheckIn;
+    final stop = checkedInStop;
+    if (checkIn == null || stop == null) return 0;
+    return stop.demandForDestination(checkIn.destinationStopId);
   }
 
   Future<void> _init() async {
@@ -135,9 +162,8 @@ class StudentController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<String?> checkInAt(BusStop stop) async {
-    final pos = position;
-    if (pos == null) {
+  Future<String?> checkInAt(BusStop stop, BusStop destination) async {
+    if (position == null) {
       await refreshLocation();
       if (position == null) {
         return locationError ?? 'Waiting for your location — try again.';
@@ -149,6 +175,7 @@ class StudentController extends ChangeNotifier {
       final result = await _checkInAtStop(
         uid: student.uid,
         stop: stop,
+        destination: destination,
         latitude: position!.latitude,
         longitude: position!.longitude,
         lastActionAt: await _lastActionAt(),
