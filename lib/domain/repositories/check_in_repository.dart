@@ -14,4 +14,6 @@ abstract class CheckInRepository {
     required String uid,
     required WaitingEndReason reason,
   });
+
+  Future<void> reportMissedBoarding(String uid);
 }
