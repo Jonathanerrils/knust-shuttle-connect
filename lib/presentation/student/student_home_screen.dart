@@ -236,6 +236,8 @@ class _CheckedIn extends StatelessWidget {
   Widget build(BuildContext context) {
     final checkIn = controller.myCheckIn!;
     final liveStop = controller.checkedInStop;
+    final compatible = controller.compatibleShuttles.length;
+    final shuttleAtStop = liveStop?.arrivedAt != null;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -256,18 +258,70 @@ class _CheckedIn extends StatelessWidget {
           textAlign: TextAlign.center,
           style: Theme.of(context).textTheme.titleMedium,
         ),
+        const SizedBox(height: 8),
+        Text(
+          compatible == 0
+              ? 'No currently assigned shuttle is confirmed for your destination.'
+              : '$compatible active ${compatible == 1 ? 'shuttle is' : 'shuttles are'} assigned to your destination.',
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.bodyMedium,
+        ),
         if (liveStop != null && liveStop.hasShuttleEnRoute) ...[
           const SizedBox(height: 10),
           Chip(
             avatar: const Icon(Icons.directions_bus, size: 18),
             label: Text(controller.etaMinutesToMyStop == null
-                ? 'A shuttle is on its way'
-                : 'A shuttle is on its way — ~${controller.etaMinutesToMyStop} min'),
+                ? 'A shuttle is on its way to this stop'
+                : 'Compatible shuttle ~${controller.etaMinutesToMyStop} min away'),
+          ),
+        ],
+        if (shuttleAtStop) ...[
+          const SizedBox(height: 12),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                children: [
+                  const Text('A shuttle has arrived. Did you get on?',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 10),
+                  OutlinedButton.icon(
+                    onPressed: controller.workingOnCheckIn
+                        ? null
+                        : () async {
+                            final error = await controller.reportMissedBoarding();
+                            if (error != null && context.mounted) {
+                              await onError(context, error);
+                            } else if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    'Recorded. You remain in the waiting queue.',
+                                  ),
+                                ),
+                              );
+                            }
+                          },
+                    icon: const Icon(Icons.no_transfer),
+                    label: const Text("Couldn't board — keep me waiting"),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+        if (checkIn.missedBoardingCount > 0) ...[
+          const SizedBox(height: 8),
+          Text(
+            'You have reported ${checkIn.missedBoardingCount} missed ${checkIn.missedBoardingCount == 1 ? 'boarding' : 'boardings'} during this wait.',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodySmall,
           ),
         ],
         const SizedBox(height: 8),
         Text(
-          'Expires ${DateFormat.jm().format(checkIn.expiresAt)} if you do not board. Leaving the stop removes you automatically.',
+          'Expires ${DateFormat.jm().format(checkIn.expiresAt)} if you are still waiting. Leaving the stop records a geofence exit.',
           textAlign: TextAlign.center,
           style: Theme.of(context).textTheme.bodySmall,
         ),
@@ -280,13 +334,26 @@ class _CheckedIn extends StatelessWidget {
           onPressed: controller.workingOnCheckIn
               ? null
               : () async {
-                  final error = await controller.boardOrCancel();
+                  final error = await controller.markBoarded();
                   if (error != null && context.mounted) {
                     await onError(context, error);
                   }
                 },
           icon: const Icon(Icons.directions_bus_filled),
-          label: const Text('I boarded / Cancel'),
+          label: const Text('I boarded'),
+        ),
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          onPressed: controller.workingOnCheckIn
+              ? null
+              : () async {
+                  final error = await controller.cancelWaiting();
+                  if (error != null && context.mounted) {
+                    await onError(context, error);
+                  }
+                },
+          icon: const Icon(Icons.close),
+          label: const Text('Cancel waiting'),
         ),
       ],
     );
