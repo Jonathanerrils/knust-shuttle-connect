@@ -41,6 +41,7 @@ class FirestoreCheckInRepository implements CheckInRepository {
       'expiresAt': Timestamp.fromDate(
         DateTime.now().add(AppConstants.checkInTtl),
       ),
+      'missedBoardingCount': 0,
     });
   }
 
@@ -52,6 +53,15 @@ class FirestoreCheckInRepository implements CheckInRepository {
     return _doc(uid).update(<String, dynamic>{
       'endReason': reason.name,
       'endedAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  @override
+  Future<void> reportMissedBoarding(String uid) {
+    return _doc(uid).update(<String, dynamic>{
+      'missedBoardingCount': FieldValue.increment(1),
+      'lastMissedBoardingAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     });
   }
