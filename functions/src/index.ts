@@ -16,7 +16,9 @@ initializeApp();
 const db = getFirestore();
 
 const BOARDING_GRACE_MINUTES = 5;
-const BATCH_SIZE = 400;
+// Expiry processing writes both an analytics event and a delete per check-in.
+// Keep this comfortably below Firestore's 500-write batch ceiling.
+const BATCH_SIZE = 200;
 const EVENT_SCHEMA_VERSION = 1;
 
 // First deployment context. These identifiers are data, not architecture:
@@ -80,6 +82,8 @@ export const onCheckInWritten = onDocumentWritten(
   async (event) => {
     const before = intentOf(event.data?.before);
     const after = intentOf(event.data?.after);
+    if (sameJourney(before, after)) return;
+
     const batch = db.batch();
 
     if (!sameIntent(before, after)) {
@@ -113,24 +117,19 @@ export const onCheckInWritten = onDocumentWritten(
       }
     }
 
-    // Journey events are independent of aggregate count changes. Replacing a
-    // check-in with the same OD pair can start a new journey without changing
-    // the number of people currently waiting.
-    if (!sameJourney(before, after)) {
-      if (before) {
-        addAnalyticsEvent(batch, "waitingEnded", {
-          journeyId: before.journeyId,
-          stopId: before.stopId,
-          destinationStopId: before.destinationStopId,
-        });
-      }
-      if (after) {
-        addAnalyticsEvent(batch, "waitingStarted", {
-          journeyId: after.journeyId,
-          stopId: after.stopId,
-          destinationStopId: after.destinationStopId,
-        });
-      }
+    if (before) {
+      addAnalyticsEvent(batch, "waitingEnded", {
+        journeyId: before.journeyId,
+        stopId: before.stopId,
+        destinationStopId: before.destinationStopId,
+      });
+    }
+    if (after) {
+      addAnalyticsEvent(batch, "waitingStarted", {
+        journeyId: after.journeyId,
+        stopId: after.stopId,
+        destinationStopId: after.destinationStopId,
+      });
     }
 
     await batch.commit();
@@ -209,7 +208,6 @@ export const onStopStatusChanged = onDocumentUpdated(
     if (!enRouteStarted && !justArrived) return;
 
     const batch = db.batch();
-    let tripId: string | null = null;
 
     if (enRouteStarted) {
       addAnalyticsEvent(batch, "shuttleEnRoute", {
@@ -221,7 +219,6 @@ export const onStopStatusChanged = onDocumentUpdated(
 
     if (justArrived) {
       const tripRef = db.collection("trips").doc();
-      tripId = tripRef.id;
       batch.set(tripRef, {
         stopId,
         stopName,
@@ -232,7 +229,7 @@ export const onStopStatusChanged = onDocumentUpdated(
         createdAt: FieldValue.serverTimestamp(),
       });
       addAnalyticsEvent(batch, "shuttleArrived", {
-        tripId,
+        tripId: tripRef.id,
         vehicleId: (after.enRouteBy as string | undefined) ?? null,
         stopId,
         waitingAtArrival: (after.waitingCount as number | undefined) ?? 0,
