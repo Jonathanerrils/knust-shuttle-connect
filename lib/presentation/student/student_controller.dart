@@ -25,7 +25,7 @@ class StudentController extends ChangeNotifier {
   final CheckInRepository _checkIns;
   final ShuttleRepository _shuttles;
   final CheckInAtStop _checkInAtStop;
-  final CancelCheckIn _cancelCheckIn;
+  final CompleteCheckIn _completeCheckIn;
 
   StreamSubscription<List<BusStop>>? _stopsSub;
   StreamSubscription<CheckIn?>? _checkInSub;
@@ -40,6 +40,7 @@ class StudentController extends ChangeNotifier {
   List<Shuttle> shuttles = const [];
   String? locationError;
   bool workingOnCheckIn = false;
+  String? selectedDestinationStopId;
 
   StudentController({
     required this.student,
@@ -50,7 +51,7 @@ class StudentController extends ChangeNotifier {
         _checkIns = checkInRepository,
         _shuttles = shuttleRepository,
         _checkInAtStop = CheckInAtStop(checkInRepository),
-        _cancelCheckIn = CancelCheckIn(checkInRepository) {
+        _completeCheckIn = CompleteCheckIn(checkInRepository) {
     _init();
   }
 
@@ -70,6 +71,25 @@ class StudentController extends ChangeNotifier {
     return best;
   }
 
+  BusStop? get selectedDestination {
+    final id = selectedDestinationStopId;
+    if (id == null) return null;
+    for (final stop in stops) {
+      if (stop.id == id) return stop;
+    }
+    return null;
+  }
+
+  List<BusStop> destinationsFor(BusStop? boardingStop) => stops
+      .where((stop) => stop.active && stop.id != boardingStop?.id)
+      .toList()
+    ..sort((a, b) => a.name.compareTo(b.name));
+
+  void selectDestination(String? stopId) {
+    selectedDestinationStopId = stopId;
+    notifyListeners();
+  }
+
   BusStop? get checkedInStop {
     final c = myCheckIn;
     if (c == null) return null;
@@ -77,6 +97,41 @@ class StudentController extends ChangeNotifier {
       if (stop.id == c.stopId) return stop;
     }
     return null;
+  }
+
+  int get peopleGoingMyWay {
+    final checkIn = myCheckIn;
+    final stop = checkedInStop;
+    if (checkIn == null || stop == null) return 0;
+    return stop.demandForDestination(checkIn.destinationStopId);
+  }
+
+  String? get activeDestinationStopId =>
+      myCheckIn?.destinationStopId ?? selectedDestinationStopId;
+
+  List<Shuttle> get compatibleShuttles {
+    final destinationId = activeDestinationStopId;
+    if (destinationId == null) return const <Shuttle>[];
+    return shuttles
+        .where((shuttle) => shuttle.canServeDestination(destinationId))
+        .toList();
+  }
+
+  List<Shuttle> get assignmentUnknownShuttles =>
+      shuttles.where((shuttle) => !shuttle.hasServiceAssignment).toList();
+
+  bool get compatibleShuttleEnRouteToMyStop {
+    final stop = checkedInStop;
+    final driverId = stop?.enRouteBy;
+    if (stop == null || driverId == null || stop.arrivedAt != null) return false;
+    return compatibleShuttles.any((shuttle) => shuttle.id == driverId);
+  }
+
+  bool get compatibleShuttleAtMyStop {
+    final stop = checkedInStop;
+    final driverId = stop?.enRouteBy;
+    if (stop == null || driverId == null || stop.arrivedAt == null) return false;
+    return compatibleShuttles.any((shuttle) => shuttle.id == driverId);
   }
 
   Future<void> _init() async {
@@ -135,9 +190,8 @@ class StudentController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<String?> checkInAt(BusStop stop) async {
-    final pos = position;
-    if (pos == null) {
+  Future<String?> checkInAt(BusStop stop, BusStop destination) async {
+    if (position == null) {
       await refreshLocation();
       if (position == null) {
         return locationError ?? 'Waiting for your location — try again.';
@@ -149,6 +203,7 @@ class StudentController extends ChangeNotifier {
       final result = await _checkInAtStop(
         uid: student.uid,
         stop: stop,
+        destination: destination,
         latitude: position!.latitude,
         longitude: position!.longitude,
         lastActionAt: await _lastActionAt(),
@@ -164,18 +219,40 @@ class StudentController extends ChangeNotifier {
     }
   }
 
-  Future<String?> boardOrCancel() async {
+  Future<String?> markBoarded() => _completeWaiting(WaitingEndReason.boarded);
+
+  Future<String?> cancelWaiting() =>
+      _completeWaiting(WaitingEndReason.cancelled);
+
+  Future<String?> _completeWaiting(WaitingEndReason reason) async {
     final current = myCheckIn;
+    if (current == null || workingOnCheckIn) return null;
     workingOnCheckIn = true;
     notifyListeners();
     try {
-      final result = await _cancelCheckIn(student.uid);
+      final result = await _completeCheckIn(student.uid, reason);
       if (result.isFailure) return result.error;
-      if (current != null) {
-        unawaited(FirebaseMessaging.instance
-            .unsubscribeFromTopic(AppConstants.stopTopic(current.stopId)));
-      }
+      unawaited(FirebaseMessaging.instance
+          .unsubscribeFromTopic(AppConstants.stopTopic(current.stopId)));
       return null;
+    } finally {
+      workingOnCheckIn = false;
+      notifyListeners();
+    }
+  }
+
+  Future<String?> reportMissedBoarding() async {
+    if (myCheckIn == null || workingOnCheckIn) return null;
+    if (!compatibleShuttleAtMyStop) {
+      return 'A compatible shuttle arrival has not been confirmed at this stop.';
+    }
+    workingOnCheckIn = true;
+    notifyListeners();
+    try {
+      await _checkIns.reportMissedBoarding(student.uid);
+      return null;
+    } catch (e) {
+      return 'Could not record the missed boarding. ($e)';
     } finally {
       workingOnCheckIn = false;
       notifyListeners();
@@ -199,7 +276,7 @@ class StudentController extends ChangeNotifier {
       final exitThreshold =
           stop.geofenceRadiusMeters + AppConstants.geofenceExitBufferMeters;
       if (distance > exitThreshold) {
-        unawaited(boardOrCancel());
+        unawaited(_completeWaiting(WaitingEndReason.geofenceExited));
       }
     });
   }
@@ -224,9 +301,10 @@ class StudentController extends ChangeNotifier {
 
   int? get etaMinutesToMyStop {
     final stop = checkedInStop;
-    if (stop == null || shuttles.isEmpty) return null;
+    final candidates = compatibleShuttles;
+    if (stop == null || candidates.isEmpty) return null;
     double best = double.infinity;
-    for (final shuttle in shuttles) {
+    for (final shuttle in candidates) {
       final eta = shuttle.etaMinutesTo(stop.latitude, stop.longitude);
       if (eta < best) best = eta;
     }

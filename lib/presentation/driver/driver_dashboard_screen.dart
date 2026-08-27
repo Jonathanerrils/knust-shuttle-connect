@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/theme/app_theme.dart';
 import '../../domain/entities/app_user.dart';
 import '../../domain/entities/bus_stop.dart';
+import '../../domain/entities/occupancy.dart';
 import '../../domain/repositories/stop_repository.dart';
 import '../auth/auth_controller.dart';
 import 'driver_controller.dart';
@@ -74,7 +75,7 @@ class _DriverDashboardViewState extends State<_DriverDashboardView> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Waiting students'),
+        title: const Text('Route demand'),
         actions: [
           IconButton(
             tooltip: 'Demand map',
@@ -95,6 +96,30 @@ class _DriverDashboardViewState extends State<_DriverDashboardView> {
       ),
       body: Column(
         children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+            child: DropdownButtonFormField<String?>(
+              initialValue: controller.selectedDestinationStopId,
+              decoration: const InputDecoration(
+                labelText: 'Destination / corridor you are serving',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.route_outlined),
+              ),
+              items: [
+                const DropdownMenuItem<String?>(
+                  value: null,
+                  child: Text('All waiting students'),
+                ),
+                for (final stop in [...controller.stops]
+                  ..sort((a, b) => a.name.compareTo(b.name)))
+                  DropdownMenuItem<String?>(
+                    value: stop.id,
+                    child: Text(stop.name),
+                  ),
+              ],
+              onChanged: controller.selectDestination,
+            ),
+          ),
           SwitchListTile(
             title: const Text('Share my live location'),
             subtitle: const Text(
@@ -102,6 +127,66 @@ class _DriverDashboardViewState extends State<_DriverDashboardView> {
             secondary: const Icon(Icons.share_location),
             value: controller.sharingLocation,
             onChanged: (v) => controller.setSharingLocation(v),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+            child: Card(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      'How full is the shuttle?',
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleMedium
+                          ?.copyWith(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Update only while safely stopped. This is an occupancy '
+                      'band, not an exact passenger count.',
+                    ),
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        _OccupancyChoice(
+                          band: OccupancyBand.light,
+                          label: 'Plenty of room',
+                          icon: Icons.event_seat_outlined,
+                          selected: controller.selectedOccupancyBand ==
+                              OccupancyBand.light,
+                        ),
+                        _OccupancyChoice(
+                          band: OccupancyBand.moderate,
+                          label: 'Moderate',
+                          icon: Icons.people_outline,
+                          selected: controller.selectedOccupancyBand ==
+                              OccupancyBand.moderate,
+                        ),
+                        _OccupancyChoice(
+                          band: OccupancyBand.limited,
+                          label: 'Limited',
+                          icon: Icons.groups_2_outlined,
+                          selected: controller.selectedOccupancyBand ==
+                              OccupancyBand.limited,
+                        ),
+                        _OccupancyChoice(
+                          band: OccupancyBand.full,
+                          label: 'Full',
+                          icon: Icons.no_transfer,
+                          selected: controller.selectedOccupancyBand ==
+                              OccupancyBand.full,
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ),
           const Divider(height: 1),
           Expanded(
@@ -121,16 +206,40 @@ class _DriverDashboardViewState extends State<_DriverDashboardView> {
   }
 }
 
+class _OccupancyChoice extends StatelessWidget {
+  final OccupancyBand band;
+  final String label;
+  final IconData icon;
+  final bool selected;
+
+  const _OccupancyChoice({
+    required this.band,
+    required this.label,
+    required this.icon,
+    required this.selected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = context.read<DriverController>();
+    return ChoiceChip(
+      avatar: Icon(icon, size: 18),
+      label: Text(label),
+      selected: selected,
+      onSelected: (_) => controller.reportOccupancy(band),
+    );
+  }
+}
+
 class _StopTile extends StatelessWidget {
   final BusStop stop;
 
   const _StopTile({required this.stop});
 
-  Color get _demandColor => AppColors.demandColor(stop.waitingCount);
-
   @override
   Widget build(BuildContext context) {
-    final controller = context.read<DriverController>();
+    final controller = context.watch<DriverController>();
+    final demand = controller.relevantDemand(stop);
     final mine = controller.isMine(stop);
     final servedByOther = stop.enRouteBy != null && !mine;
 
@@ -145,11 +254,11 @@ class _StopTile extends StatelessWidget {
               height: 64,
               alignment: Alignment.center,
               decoration: BoxDecoration(
-                color: _demandColor,
+                color: AppColors.demandColor(demand),
                 shape: BoxShape.circle,
               ),
               child: Text(
-                '${stop.waitingCount}',
+                '$demand',
                 style: const TextStyle(
                   color: Colors.white,
                   fontSize: 24,
@@ -169,6 +278,9 @@ class _StopTile extends StatelessWidget {
                         .titleMedium
                         ?.copyWith(fontWeight: FontWeight.bold),
                   ),
+                  Text(controller.selectedDestinationStopId == null
+                      ? '${stop.waitingCount} total waiting'
+                      : '$demand waiting for your selected destination'),
                   if (servedByOther)
                     const Text('Another shuttle is en route',
                         style: TextStyle(fontStyle: FontStyle.italic)),
@@ -207,8 +319,9 @@ class _ActionButton extends StatelessWidget {
     if (mine && stop.arrivedAt == null) {
       return FilledButton(
         style: FilledButton.styleFrom(
-            minimumSize: const Size(110, 56),
-            backgroundColor: AppColors.knustGreen),
+          minimumSize: const Size(110, 56),
+          backgroundColor: AppColors.knustGreen,
+        ),
         onPressed: () => controller.markArrived(stop),
         child: const Text('Arrived'),
       );

@@ -26,8 +26,16 @@ class _StudentMapScreenState extends State<StudentMapScreen> {
     _shuttles = context.read<ShuttleRepository>().watchOnDutyShuttles();
   }
 
+  bool _isCompatible(StudentController controller, Shuttle shuttle) {
+    final destinationId = controller.activeDestinationStopId;
+    return destinationId != null && shuttle.canServeDestination(destinationId);
+  }
+
   Future<Set<Marker>> _buildMarkers(
-      List<BusStop> stops, List<Shuttle> shuttles) async {
+    StudentController controller,
+    List<BusStop> stops,
+    List<Shuttle> shuttles,
+  ) async {
     final markers = <Marker>{};
     for (final stop in stops) {
       markers.add(Marker(
@@ -43,12 +51,33 @@ class _StudentMapScreenState extends State<StudentMapScreen> {
         anchor: const Offset(0.5, 0.5),
       ));
     }
+
     for (final shuttle in shuttles) {
+      final compatible = _isCompatible(controller, shuttle);
+      final assignmentKnown = shuttle.hasServiceAssignment;
+      final hue = compatible
+          ? BitmapDescriptor.hueGreen
+          : assignmentKnown
+              ? BitmapDescriptor.hueOrange
+              : BitmapDescriptor.hueViolet;
+      final serviceStatus = compatible
+          ? 'Compatible with your destination'
+          : assignmentKnown
+              ? 'Serving another destination'
+              : 'Service assignment not confirmed';
+      final occupancy = shuttle.occupancyEstimate();
+      final occupancyText = compatible
+          ? ' · ${occupancy.label} (${occupancy.confidenceLabel} confidence)'
+          : '';
+
       markers.add(Marker(
         markerId: MarkerId('shuttle-${shuttle.id}'),
         position: LatLng(shuttle.latitude, shuttle.longitude),
-        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
-        infoWindow: const InfoWindow(title: 'Shuttle'),
+        icon: BitmapDescriptor.defaultMarkerWithHue(hue),
+        infoWindow: InfoWindow(
+          title: compatible ? 'Compatible shuttle' : 'Active shuttle',
+          snippet: '$serviceStatus$occupancyText',
+        ),
         rotation: shuttle.headingDegrees ?? 0,
       ));
     }
@@ -57,16 +86,33 @@ class _StudentMapScreenState extends State<StudentMapScreen> {
 
   String? _etaText(StudentController controller, List<Shuttle> shuttles) {
     final stop = controller.checkedInStop ?? controller.nearestStop;
-    if (stop == null || shuttles.isEmpty) return null;
+    final destinationId = controller.activeDestinationStopId;
+    if (stop == null || destinationId == null) return null;
+
+    final compatible = shuttles
+        .where((shuttle) => shuttle.canServeDestination(destinationId))
+        .toList();
+    if (compatible.isEmpty) {
+      return 'No currently assigned shuttle is confirmed for your destination.';
+    }
+
+    Shuttle? bestShuttle;
     double best = double.infinity;
-    for (final shuttle in shuttles) {
+    for (final shuttle in compatible) {
       final eta = shuttle.etaMinutesTo(stop.latitude, stop.longitude);
-      if (eta < best) best = eta;
+      if (eta < best) {
+        best = eta;
+        bestShuttle = shuttle;
+      }
     }
     final minutes = best.ceil();
+    final occupancy = bestShuttle?.occupancyEstimate();
+    final occupancySuffix = occupancy == null
+        ? ''
+        : ' · ${occupancy.label} (${occupancy.confidenceLabel})';
     return minutes <= 1
-        ? 'A shuttle is about a minute from ${stop.name}'
-        : 'Nearest shuttle is ~$minutes min from ${stop.name}';
+        ? 'Compatible shuttle ~1 min from ${stop.name}$occupancySuffix'
+        : 'Compatible shuttle ~$minutes min from ${stop.name}$occupancySuffix';
   }
 
   @override
@@ -81,7 +127,7 @@ class _StudentMapScreenState extends State<StudentMapScreen> {
           final shuttles = snapshot.data ?? const <Shuttle>[];
           final eta = _etaText(controller, shuttles);
           return FutureBuilder<Set<Marker>>(
-            future: _buildMarkers(controller.stops, shuttles),
+            future: _buildMarkers(controller, controller.stops, shuttles),
             builder: (context, markerSnapshot) => Stack(
               children: [
                 GoogleMap(

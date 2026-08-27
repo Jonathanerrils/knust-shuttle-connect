@@ -16,17 +16,22 @@ class DriverMapScreen extends StatelessWidget {
     final controller = context.read<DriverController>();
     final markers = <Marker>{};
     for (final stop in stops) {
+      final demand = controller.relevantDemand(stop);
       markers.add(Marker(
         markerId: MarkerId('stop-${stop.id}'),
         position: LatLng(stop.latitude, stop.longitude),
         icon: await MapMarkers.countBadge(
-            stop.waitingCount, AppColors.demandColor(stop.waitingCount)),
+          demand,
+          AppColors.demandColor(demand),
+        ),
         anchor: const Offset(0.5, 0.5),
         infoWindow: InfoWindow(
           title: stop.name,
           snippet: controller.isMine(stop)
               ? 'You are en route — tap your list to update'
-              : '${stop.waitingCount} waiting · tap here to go en route',
+              : controller.selectedDestinationStopId == null
+                  ? '$demand total waiting · tap here to go en route'
+                  : '$demand waiting for your selected destination · tap here to go en route',
           onTap: controller.isMine(stop)
               ? null
               : () => controller.markEnRoute(stop),
@@ -41,7 +46,11 @@ class DriverMapScreen extends StatelessWidget {
     final controller = context.watch<DriverController>();
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Demand map')),
+      appBar: AppBar(
+        title: Text(controller.selectedDestinationStopId == null
+            ? 'Demand map'
+            : 'Route-specific demand map'),
+      ),
       body: FutureBuilder<Set<Marker>>(
         future: _buildMarkers(context, controller.stops),
         builder: (context, snapshot) => GoogleMap(

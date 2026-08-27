@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import '../../core/theme/app_theme.dart';
 import '../../domain/entities/app_user.dart';
+import '../../domain/entities/bus_stop.dart';
 import '../../domain/repositories/check_in_repository.dart';
 import '../../domain/repositories/shuttle_repository.dart';
 import '../../domain/repositories/stop_repository.dart';
@@ -11,6 +12,7 @@ import '../auth/auth_controller.dart';
 import '../common/last_updated_banner.dart';
 import 'stop_picker_sheet.dart';
 import 'student_controller.dart';
+import 'student_info_cards.dart';
 import 'student_map_screen.dart';
 
 class StudentHomeScreen extends StatelessWidget {
@@ -37,8 +39,7 @@ class _StudentHomeView extends StatelessWidget {
 
   Future<void> _showError(BuildContext context, String? error) async {
     if (error == null || !context.mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(error)));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
   }
 
   @override
@@ -75,11 +76,18 @@ class _StudentHomeView extends StatelessWidget {
               updatedAt: controller.stopsUpdatedAt,
             ),
             Expanded(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: checkIn == null
-                    ? _NotCheckedIn(controller: controller, onError: _showError)
-                    : _CheckedIn(controller: controller, onError: _showError),
+              child: ListView(
+                padding: const EdgeInsets.all(20),
+                children: [
+                  if (checkIn == null)
+                    _NotCheckedIn(controller: controller, onError: _showError)
+                  else
+                    _CheckedIn(controller: controller, onError: _showError),
+                  const SizedBox(height: 16),
+                  const SafetyTipCard(),
+                  const SizedBox(height: 10),
+                  const SponsoredSlotCard(),
+                ],
               ),
             ),
           ],
@@ -98,76 +106,74 @@ class _NotCheckedIn extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final nearest = controller.nearestStop;
+    final destinations = controller.destinationsFor(nearest);
+    final destination = controller.selectedDestination;
 
     return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         if (controller.locationError != null) ...[
-          Text(
-            controller.locationError!,
-            textAlign: TextAlign.center,
-            style: TextStyle(color: Theme.of(context).colorScheme.error),
-          ),
+          Text(controller.locationError!,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Theme.of(context).colorScheme.error)),
           const SizedBox(height: 8),
           OutlinedButton.icon(
             onPressed: controller.refreshLocation,
             icon: const Icon(Icons.my_location),
             label: const Text('Retry location'),
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 16),
         ],
+        Text('Boarding stop', style: Theme.of(context).textTheme.labelLarge),
+        const SizedBox(height: 4),
         Text(
-          nearest == null ? 'Finding your nearest stop…' : 'Nearest stop',
-          textAlign: TextAlign.center,
-          style: Theme.of(context).textTheme.titleMedium,
+          nearest?.name ?? 'Finding your nearest stop…',
+          style: Theme.of(context)
+              .textTheme
+              .headlineSmall
+              ?.copyWith(fontWeight: FontWeight.bold),
         ),
-        if (nearest != null) ...[
-          const SizedBox(height: 4),
-          Text(
-            nearest.name,
-            textAlign: TextAlign.center,
-            style: Theme.of(context)
-                .textTheme
-                .headlineMedium
-                ?.copyWith(fontWeight: FontWeight.bold),
+        if (nearest != null)
+          Text('${nearest.waitingCount} people currently checked in here'),
+        const SizedBox(height: 18),
+        DropdownButtonFormField<String>(
+          initialValue: destination?.id,
+          decoration: const InputDecoration(
+            labelText: 'Where are you going?',
+            border: OutlineInputBorder(),
+            prefixIcon: Icon(Icons.flag_outlined),
           ),
-          Text(
-            '${nearest.waitingCount} waiting now',
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.bodyMedium,
-          ),
-        ],
-        const SizedBox(height: 24),
+          items: [
+            for (final stop in destinations)
+              DropdownMenuItem(value: stop.id, child: Text(stop.name)),
+          ],
+          onChanged: controller.selectDestination,
+        ),
+        const SizedBox(height: 20),
         SizedBox(
-          height: 96,
+          height: 82,
           child: FilledButton.icon(
             style: FilledButton.styleFrom(
               backgroundColor: AppColors.knustRed,
               foregroundColor: Colors.white,
               textStyle:
-                  const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                  const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
             ),
-            onPressed: nearest == null || controller.workingOnCheckIn
+            onPressed: nearest == null ||
+                    destination == null ||
+                    controller.workingOnCheckIn
                 ? null
                 : () async {
-                    final error = await controller.checkInAt(nearest);
+                    final error = await controller.checkInAt(nearest, destination);
                     if (error != null && context.mounted) {
                       await onError(context, error);
                     }
                   },
-            icon: controller.workingOnCheckIn
-                ? const SizedBox(
-                    height: 24,
-                    width: 24,
-                    child: CircularProgressIndicator(
-                        strokeWidth: 2.5, color: Colors.white),
-                  )
-                : const Icon(Icons.front_hand, size: 32),
+            icon: const Icon(Icons.front_hand, size: 30),
             label: const Text("I'm Waiting Here"),
           ),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
         TextButton(
           onPressed: controller.stops.isEmpty
               ? null
@@ -177,16 +183,45 @@ class _NotCheckedIn extends StatelessWidget {
                     stops: controller.stops,
                     position: controller.position,
                   );
-                  if (stop != null && context.mounted) {
-                    final error = await controller.checkInAt(stop);
-                    if (error != null && context.mounted) {
-                      await onError(context, error);
-                    }
+                  if (stop == null || !context.mounted) return;
+                  final chosenDestination = await _chooseDestination(
+                    context,
+                    controller.destinationsFor(stop),
+                  );
+                  if (chosenDestination == null || !context.mounted) return;
+                  final error =
+                      await controller.checkInAt(stop, chosenDestination);
+                  if (error != null && context.mounted) {
+                    await onError(context, error);
                   }
                 },
-          child: const Text('Choose a different stop'),
+          child: const Text('Choose a different boarding stop'),
         ),
       ],
+    );
+  }
+
+  Future<BusStop?> _chooseDestination(
+      BuildContext context, List<BusStop> destinations) {
+    return showModalBottomSheet<BusStop>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: ListView(
+          children: [
+            const ListTile(
+              title: Text('Where are you going?',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+            for (final stop in destinations)
+              ListTile(
+                leading: const Icon(Icons.flag_outlined),
+                title: Text(stop.name),
+                onTap: () => Navigator.of(ctx).pop(stop),
+              ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -200,17 +235,17 @@ class _CheckedIn extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final checkIn = controller.myCheckIn!;
-    final liveStop = controller.checkedInStop;
-    final count = liveStop?.waitingCount;
+    final compatible = controller.compatibleShuttles.length;
+    final compatibleEnRoute = controller.compatibleShuttleEnRouteToMyStop;
+    final compatibleAtStop = controller.compatibleShuttleAtMyStop;
 
     return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Icon(Icons.check_circle, size: 72, color: AppColors.knustGreen),
-        const SizedBox(height: 16),
+        const Icon(Icons.check_circle, size: 68, color: AppColors.knustGreen),
+        const SizedBox(height: 12),
         Text(
-          "You've been counted at\n${checkIn.stopName}",
+          '${checkIn.stopName} → ${checkIn.destinationStopName}',
           textAlign: TextAlign.center,
           style: Theme.of(context)
               .textTheme
@@ -218,56 +253,107 @@ class _CheckedIn extends StatelessWidget {
               ?.copyWith(fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 8),
-        if (count != null)
-          Text(
-            '$count waiting here now',
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-        if (liveStop != null && liveStop.hasShuttleEnRoute) ...[
-          const SizedBox(height: 8),
+        Text(
+          '${controller.peopleGoingMyWay} ${controller.peopleGoingMyWay == 1 ? 'person is' : 'people are'} going your way',
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
+        const SizedBox(height: 8),
+        Text(
+          compatible == 0
+              ? 'No currently assigned shuttle is confirmed for your destination.'
+              : '$compatible active ${compatible == 1 ? 'shuttle is' : 'shuttles are'} assigned to your destination.',
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.bodyMedium,
+        ),
+        if (compatibleEnRoute) ...[
+          const SizedBox(height: 10),
           Chip(
             avatar: const Icon(Icons.directions_bus, size: 18),
             label: Text(controller.etaMinutesToMyStop == null
-                ? 'A shuttle is on its way to this stop'
-                : 'A shuttle is on its way — ~${controller.etaMinutesToMyStop} min'),
-            backgroundColor:
-                AppColors.knustGold.withValues(alpha: 0.25),
+                ? 'A compatible shuttle is on its way to this stop'
+                : 'Compatible shuttle ~${controller.etaMinutesToMyStop} min away'),
           ),
-        ] else if (controller.etaMinutesToMyStop != null) ...[
+        ],
+        if (compatibleAtStop) ...[
+          const SizedBox(height: 12),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                children: [
+                  const Text('Your compatible shuttle has arrived. Did you get on?',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 10),
+                  OutlinedButton.icon(
+                    onPressed: controller.workingOnCheckIn
+                        ? null
+                        : () async {
+                            final error = await controller.reportMissedBoarding();
+                            if (error != null && context.mounted) {
+                              await onError(context, error);
+                            } else if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    'Recorded. You remain in the waiting queue.',
+                                  ),
+                                ),
+                              );
+                            }
+                          },
+                    icon: const Icon(Icons.no_transfer),
+                    label: const Text("Couldn't board — keep me waiting"),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+        if (checkIn.missedBoardingCount > 0) ...[
           const SizedBox(height: 8),
-          Chip(
-            avatar: const Icon(Icons.near_me, size: 18),
-            label: Text(
-                'Nearest shuttle ~${controller.etaMinutesToMyStop} min away'),
+          Text(
+            'You have reported ${checkIn.missedBoardingCount} missed ${checkIn.missedBoardingCount == 1 ? 'boarding' : 'boardings'} during this wait.',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodySmall,
           ),
         ],
         const SizedBox(height: 8),
         Text(
-          'Expires ${DateFormat.jm().format(checkIn.expiresAt)} if you '
-          'don’t board. Leaving the stop removes you automatically.',
+          'Expires ${DateFormat.jm().format(checkIn.expiresAt)} if you are still waiting. Leaving the stop records a geofence exit.',
           textAlign: TextAlign.center,
           style: Theme.of(context).textTheme.bodySmall,
         ),
-        const SizedBox(height: 32),
-        SizedBox(
-          height: 72,
-          child: FilledButton.icon(
-            style: FilledButton.styleFrom(
-              backgroundColor: AppColors.knustGreen,
-              foregroundColor: Colors.white,
-            ),
-            onPressed: controller.workingOnCheckIn
-                ? null
-                : () async {
-                    final error = await controller.boardOrCancel();
-                    if (error != null && context.mounted) {
-                      await onError(context, error);
-                    }
-                  },
-            icon: const Icon(Icons.directions_bus_filled),
-            label: const Text('I boarded / Cancel'),
+        const SizedBox(height: 24),
+        FilledButton.icon(
+          style: FilledButton.styleFrom(
+            backgroundColor: AppColors.knustGreen,
+            foregroundColor: Colors.white,
           ),
+          onPressed: controller.workingOnCheckIn
+              ? null
+              : () async {
+                  final error = await controller.markBoarded();
+                  if (error != null && context.mounted) {
+                    await onError(context, error);
+                  }
+                },
+          icon: const Icon(Icons.directions_bus_filled),
+          label: const Text('I boarded'),
+        ),
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          onPressed: controller.workingOnCheckIn
+              ? null
+              : () async {
+                  final error = await controller.cancelWaiting();
+                  if (error != null && context.mounted) {
+                    await onError(context, error);
+                  }
+                },
+          icon: const Icon(Icons.close),
+          label: const Text('Cancel waiting'),
         ),
       ],
     );

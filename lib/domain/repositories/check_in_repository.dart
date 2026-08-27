@@ -3,6 +3,17 @@ import '../entities/check_in.dart';
 
 abstract class CheckInRepository {
   Stream<CheckIn?> watchMyCheckIn(String uid);
-  Future<void> checkIn({required String uid, required BusStop stop});
-  Future<void> cancel(String uid);
+
+  Future<void> checkIn({
+    required String uid,
+    required BusStop stop,
+    required BusStop destination,
+  });
+
+  Future<void> complete({
+    required String uid,
+    required WaitingEndReason reason,
+  });
+
+  Future<void> reportMissedBoarding(String uid);
 }

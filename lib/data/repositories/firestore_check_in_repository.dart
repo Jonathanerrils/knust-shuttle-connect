@@ -18,24 +18,51 @@ class FirestoreCheckInRepository implements CheckInRepository {
   Stream<CheckIn?> watchMyCheckIn(String uid) => _doc(uid).snapshots().map(
         (doc) {
           final checkIn = CheckInModel.fromDoc(doc);
-          if (checkIn == null || checkIn.isExpired) return null;
+          if (checkIn == null || !checkIn.isActive) return null;
           return checkIn;
         },
       );
 
   @override
-  Future<void> checkIn({required String uid, required BusStop stop}) {
+  Future<void> checkIn({
+    required String uid,
+    required BusStop stop,
+    required BusStop destination,
+  }) {
+    final journeyId = _db.collection('analytics_events').doc().id;
     return _doc(uid).set(<String, dynamic>{
+      'journeyId': journeyId,
       'stopId': stop.id,
       'stopName': stop.name,
+      'destinationStopId': destination.id,
+      'destinationStopName': destination.name,
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
       'expiresAt': Timestamp.fromDate(
         DateTime.now().add(AppConstants.checkInTtl),
       ),
+      'missedBoardingCount': 0,
     });
   }
 
   @override
-  Future<void> cancel(String uid) => _doc(uid).delete();
+  Future<void> complete({
+    required String uid,
+    required WaitingEndReason reason,
+  }) {
+    return _doc(uid).update(<String, dynamic>{
+      'endReason': reason.name,
+      'endedAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  @override
+  Future<void> reportMissedBoarding(String uid) {
+    return _doc(uid).update(<String, dynamic>{
+      'missedBoardingCount': FieldValue.increment(1),
+      'lastMissedBoardingAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
 }

@@ -6,17 +6,36 @@ import 'package:knust_shuttle_connect/domain/usecases/check_in_at_stop.dart';
 
 class _FakeCheckInRepository implements CheckInRepository {
   BusStop? lastCheckedInStop;
+  BusStop? lastDestination;
   String? lastUid;
-  bool cancelled = false;
+  WaitingEndReason? lastEndReason;
+  int missedBoardings = 0;
 
   @override
-  Future<void> checkIn({required String uid, required BusStop stop}) async {
+  Future<void> checkIn({
+    required String uid,
+    required BusStop stop,
+    required BusStop destination,
+  }) async {
     lastUid = uid;
     lastCheckedInStop = stop;
+    lastDestination = destination;
   }
 
   @override
-  Future<void> cancel(String uid) async => cancelled = true;
+  Future<void> complete({
+    required String uid,
+    required WaitingEndReason reason,
+  }) async {
+    lastUid = uid;
+    lastEndReason = reason;
+  }
+
+  @override
+  Future<void> reportMissedBoarding(String uid) async {
+    lastUid = uid;
+    missedBoardings++;
+  }
 
   @override
   Stream<CheckIn?> watchMyCheckIn(String uid) => const Stream.empty();
@@ -30,6 +49,13 @@ void main() {
     longitude: -1.5760,
     geofenceRadiusMeters: 75,
   );
+  const destination = BusStop(
+    id: 'brunei',
+    name: 'Brunei',
+    latitude: 6.6797,
+    longitude: -1.5722,
+    geofenceRadiusMeters: 75,
+  );
 
   late _FakeCheckInRepository repo;
   late CheckInAtStop useCase;
@@ -39,22 +65,38 @@ void main() {
     useCase = CheckInAtStop(repo);
   });
 
-  test('succeeds when inside the geofence and not rate-limited', () async {
+  test('succeeds inside the geofence with a different destination', () async {
     final result = await useCase(
       uid: 'student1',
       stop: stop,
+      destination: destination,
       latitude: stop.latitude + 0.0001,
       longitude: stop.longitude,
     );
     expect(result.isSuccess, isTrue);
     expect(repo.lastCheckedInStop?.id, 'commercial-area');
+    expect(repo.lastDestination?.id, 'brunei');
     expect(repo.lastUid, 'student1');
   });
 
-  test('rejects check-in outside the geofence (GPS verification)', () async {
+  test('rejects selecting the boarding stop as the destination', () async {
     final result = await useCase(
       uid: 'student1',
       stop: stop,
+      destination: stop,
+      latitude: stop.latitude,
+      longitude: stop.longitude,
+    );
+    expect(result.isFailure, isTrue);
+    expect(result.error, contains('destination'));
+    expect(repo.lastCheckedInStop, isNull);
+  });
+
+  test('rejects check-in outside the geofence', () async {
+    final result = await useCase(
+      uid: 'student1',
+      stop: stop,
+      destination: destination,
       latitude: stop.latitude + 0.01,
       longitude: stop.longitude,
     );
@@ -63,10 +105,11 @@ void main() {
     expect(repo.lastCheckedInStop, isNull);
   });
 
-  test('rejects rapid repeated check-ins (rate limiting)', () async {
+  test('rejects rapid repeated check-ins', () async {
     final result = await useCase(
       uid: 'student1',
       stop: stop,
+      destination: destination,
       latitude: stop.latitude,
       longitude: stop.longitude,
       lastActionAt: DateTime.now().subtract(const Duration(seconds: 10)),
@@ -80,6 +123,7 @@ void main() {
     final result = await useCase(
       uid: 'student1',
       stop: stop,
+      destination: destination,
       latitude: stop.latitude,
       longitude: stop.longitude,
       lastActionAt: DateTime.now().subtract(const Duration(seconds: 61)),
@@ -87,22 +131,45 @@ void main() {
     expect(result.isSuccess, isTrue);
   });
 
-  test('check-in entity reports expiry correctly (auto-expiry)', () {
-    final expired = CheckIn(
-      studentUid: 'student1',
-      stopId: stop.id,
-      stopName: stop.name,
-      createdAt: DateTime.now().subtract(const Duration(minutes: 30)),
-      expiresAt: DateTime.now().subtract(const Duration(minutes: 5)),
-    );
+  test('check-in entity distinguishes active and terminal state', () {
     final fresh = CheckIn(
       studentUid: 'student1',
+      journeyId: 'journey-fresh-001',
       stopId: stop.id,
       stopName: stop.name,
+      destinationStopId: destination.id,
+      destinationStopName: destination.name,
       createdAt: DateTime.now(),
       expiresAt: DateTime.now().add(const Duration(minutes: 25)),
     );
+    final boarded = CheckIn(
+      studentUid: 'student1',
+      journeyId: 'journey-boarded-001',
+      stopId: stop.id,
+      stopName: stop.name,
+      destinationStopId: destination.id,
+      destinationStopName: destination.name,
+      createdAt: DateTime.now().subtract(const Duration(minutes: 5)),
+      expiresAt: DateTime.now().add(const Duration(minutes: 20)),
+      endReason: WaitingEndReason.boarded,
+      endedAt: DateTime.now(),
+    );
+    expect(fresh.isActive, isTrue);
+    expect(boarded.isActive, isFalse);
+  });
+
+  test('check-in entity reports expiry correctly', () {
+    final expired = CheckIn(
+      studentUid: 'student1',
+      journeyId: 'journey-expired-001',
+      stopId: stop.id,
+      stopName: stop.name,
+      destinationStopId: destination.id,
+      destinationStopName: destination.name,
+      createdAt: DateTime.now().subtract(const Duration(minutes: 30)),
+      expiresAt: DateTime.now().subtract(const Duration(minutes: 5)),
+    );
     expect(expired.isExpired, isTrue);
-    expect(fresh.isExpired, isFalse);
+    expect(expired.isActive, isFalse);
   });
 }
