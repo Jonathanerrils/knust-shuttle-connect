@@ -43,10 +43,13 @@ service cloud.firestore {
     match /checkins/{uid} {
       function validCheckIn() {
         return request.resource.data.keys().hasOnly([
+                 'journeyId',
                  'stopId', 'stopName',
                  'destinationStopId', 'destinationStopName',
                  'createdAt', 'updatedAt', 'expiresAt'
                ])
+          && request.resource.data.journeyId is string
+          && request.resource.data.journeyId.size() >= 12
           && request.resource.data.stopId is string
           && request.resource.data.destinationStopId is string
           && request.resource.data.stopId != request.resource.data.destinationStopId
@@ -71,12 +74,42 @@ service cloud.firestore {
       allow write: if hasRole('driver') && request.auth.uid == driverUid;
     }
 
+    // Network reference data is readable in-app but only administrators may
+    // mutate it. These collections support expansion beyond one campus.
+    match /routes/{routeId} {
+      allow read: if signedIn();
+      allow write: if hasRole('admin');
+    }
+
+    match /vehicles/{vehicleId} {
+      allow read: if signedIn();
+      allow write: if hasRole('admin');
+    }
+
+    match /operators/{operatorId} {
+      allow read: if signedIn();
+      allow write: if hasRole('admin');
+    }
+
+    match /networks/{networkId} {
+      allow read: if signedIn();
+      allow write: if hasRole('admin');
+    }
+
     match /trips/{tripId} {
       allow read: if hasRole('admin');
       allow write: if false;
     }
 
     match /analytics_daily/{docId} {
+      allow read: if hasRole('admin');
+      allow write: if false;
+    }
+
+    // Immutable raw event stream. Only trusted server code writes it. Keeping
+    // client writes disabled prevents forged analytics and protects the future
+    // BigQuery export from untrusted instrumentation.
+    match /analytics_events/{eventId} {
       allow read: if hasRole('admin');
       allow write: if false;
     }
