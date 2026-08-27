@@ -10,13 +10,14 @@ enum AnalyticsEventType {
   shuttleEnRoute,
   shuttleArrived,
   boarded,
+  occupancyReported,
   etaGenerated,
   etaOutcomeRecorded,
   safetyReportSubmitted,
 }
 
 class AnalyticsEvent {
-  static const int currentSchemaVersion = 2;
+  static const int currentSchemaVersion = 3;
 
   final String eventId;
   final AnalyticsEventType type;
