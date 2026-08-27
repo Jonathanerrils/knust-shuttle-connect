@@ -1,0 +1,86 @@
+rules_version = '2';
+
+// KNUST Shuttle Connect — Firestore security rules.
+//
+// Trust model:
+//  - waitingCount on stops is maintained ONLY by Cloud Functions (Admin SDK
+//    bypasses these rules); no client can write it.
+//  - Students can only create/replace/delete THEIR OWN check-in (doc id ==
+//    their uid), which also structurally enforces one active check-in.
+//  - Drivers may only touch the en-route fields on stops, and their own
+//    shuttle-position doc. Only admins edit stop definitions.
+//  - Privacy: drivers get no read access to checkins, so student identity
+//    is never exposed — drivers only ever see aggregate counts on stops.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function profile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function hasRole(role) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && profile().role == role;
+    }
+
+    match /users/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || hasRole('admin'));
+      allow create: if signedIn()
+        && request.auth.uid == uid
+        && request.resource.data.role == 'student';
+      allow update: if signedIn()
+        && request.auth.uid == uid
+        && request.resource.data.role == resource.data.role;
+      allow delete: if false;
+    }
+
+    match /stops/{stopId} {
+      allow read: if signedIn();
+      allow create, delete: if hasRole('admin');
+      allow update: if hasRole('admin')
+        || (hasRole('driver')
+            && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['enRouteBy', 'enRouteAt', 'arrivedAt']));
+    }
+
+    match /checkins/{uid} {
+      function validCheckIn() {
+        return request.resource.data.keys().hasOnly(
+                 ['stopId', 'stopName', 'createdAt', 'updatedAt', 'expiresAt'])
+          && request.resource.data.stopId is string
+          && exists(/databases/$(database)/documents/stops/$(request.resource.data.stopId))
+          && request.resource.data.expiresAt is timestamp
+          && request.resource.data.expiresAt.toMillis()
+               <= request.time.toMillis() + 30 * 60 * 1000;
+      }
+
+      allow read: if signedIn() && (request.auth.uid == uid || hasRole('admin'));
+      allow create: if signedIn() && request.auth.uid == uid && validCheckIn();
+      allow update: if signedIn()
+        && request.auth.uid == uid
+        && validCheckIn()
+        && request.time > resource.data.updatedAt + duration.value(55, 's');
+      allow delete: if signedIn() && request.auth.uid == uid;
+    }
+
+    match /shuttles/{driverUid} {
+      allow read: if signedIn();
+      allow write: if hasRole('driver') && request.auth.uid == driverUid;
+    }
+
+    match /trips/{tripId} {
+      allow read: if hasRole('admin');
+      allow write: if false;
+    }
+
+    match /analytics_daily/{docId} {
+      allow read: if hasRole('admin');
+      allow write: if false;
+    }
+  }
+}
