@@ -12,6 +12,8 @@ class CheckInModel {
       studentUid: doc.id,
       stopId: data['stopId'] as String,
       stopName: (data['stopName'] as String?) ?? '',
+      destinationStopId: (data['destinationStopId'] as String?) ?? '',
+      destinationStopName: (data['destinationStopName'] as String?) ?? '',
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       expiresAt: (data['expiresAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
     );
