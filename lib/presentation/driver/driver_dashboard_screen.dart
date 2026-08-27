@@ -74,7 +74,7 @@ class _DriverDashboardViewState extends State<_DriverDashboardView> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Waiting students'),
+        title: const Text('Route demand'),
         actions: [
           IconButton(
             tooltip: 'Demand map',
@@ -95,6 +95,30 @@ class _DriverDashboardViewState extends State<_DriverDashboardView> {
       ),
       body: Column(
         children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+            child: DropdownButtonFormField<String?>(
+              value: controller.selectedDestinationStopId,
+              decoration: const InputDecoration(
+                labelText: 'Destination / corridor you are serving',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.route_outlined),
+              ),
+              items: [
+                const DropdownMenuItem<String?>(
+                  value: null,
+                  child: Text('All waiting students'),
+                ),
+                for (final stop in [...controller.stops]
+                  ..sort((a, b) => a.name.compareTo(b.name)))
+                  DropdownMenuItem<String?>(
+                    value: stop.id,
+                    child: Text(stop.name),
+                  ),
+              ],
+              onChanged: controller.selectDestination,
+            ),
+          ),
           SwitchListTile(
             title: const Text('Share my live location'),
             subtitle: const Text(
@@ -126,11 +150,10 @@ class _StopTile extends StatelessWidget {
 
   const _StopTile({required this.stop});
 
-  Color get _demandColor => AppColors.demandColor(stop.waitingCount);
-
   @override
   Widget build(BuildContext context) {
-    final controller = context.read<DriverController>();
+    final controller = context.watch<DriverController>();
+    final demand = controller.relevantDemand(stop);
     final mine = controller.isMine(stop);
     final servedByOther = stop.enRouteBy != null && !mine;
 
@@ -145,11 +168,11 @@ class _StopTile extends StatelessWidget {
               height: 64,
               alignment: Alignment.center,
               decoration: BoxDecoration(
-                color: _demandColor,
+                color: AppColors.demandColor(demand),
                 shape: BoxShape.circle,
               ),
               child: Text(
-                '${stop.waitingCount}',
+                '$demand',
                 style: const TextStyle(
                   color: Colors.white,
                   fontSize: 24,
@@ -169,6 +192,9 @@ class _StopTile extends StatelessWidget {
                         .titleMedium
                         ?.copyWith(fontWeight: FontWeight.bold),
                   ),
+                  Text(controller.selectedDestinationStopId == null
+                      ? '${stop.waitingCount} total waiting'
+                      : '$demand waiting for your selected destination'),
                   if (servedByOther)
                     const Text('Another shuttle is en route',
                         style: TextStyle(fontStyle: FontStyle.italic)),
@@ -207,8 +233,9 @@ class _ActionButton extends StatelessWidget {
     if (mine && stop.arrivedAt == null) {
       return FilledButton(
         style: FilledButton.styleFrom(
-            minimumSize: const Size(110, 56),
-            backgroundColor: AppColors.knustGreen),
+          minimumSize: const Size(110, 56),
+          backgroundColor: AppColors.knustGreen,
+        ),
         onPressed: () => controller.markArrived(stop),
         child: const Text('Arrived'),
       );
