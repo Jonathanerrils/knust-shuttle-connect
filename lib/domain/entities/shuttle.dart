@@ -1,5 +1,6 @@
 import '../../core/utils/geo_utils.dart';
 import '../services/eta_estimator.dart';
+import 'occupancy.dart';
 
 class Shuttle {
   final String id;
@@ -13,6 +14,10 @@ class Shuttle {
   final String? tripId;
   final String? routeDirection;
   final int? currentStopSequence;
+  final OccupancyBand? driverOccupancyBand;
+  final DateTime? occupancyReportedAt;
+  final int? trackedOnboardCount;
+  final int? safeCapacity;
 
   const Shuttle({
     required this.id,
@@ -26,6 +31,10 @@ class Shuttle {
     this.tripId,
     this.routeDirection,
     this.currentStopSequence,
+    this.driverOccupancyBand,
+    this.occupancyReportedAt,
+    this.trackedOnboardCount,
+    this.safeCapacity,
   });
 
   bool get isFresh =>
@@ -37,6 +46,15 @@ class Shuttle {
 
   bool canServeDestination(String destinationStopId) =>
       servingDestinationStopId == destinationStopId;
+
+  OccupancyEstimate occupancyEstimate({DateTime? now}) =>
+      OccupancyEstimate.fromSignals(
+        driverReportedBand: driverOccupancyBand,
+        driverReportedAt: occupancyReportedAt,
+        trackedOnboardCount: trackedOnboardCount,
+        safeCapacity: safeCapacity,
+        now: now,
+      );
 
   EtaEstimate etaEstimateTo(
     double lat,
