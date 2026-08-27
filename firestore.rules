@@ -77,7 +77,8 @@ service cloud.firestore {
       }
 
       function validMissedBoardingUpdate() {
-        return request.resource.data.diff(resource.data).affectedKeys()
+        return !resource.data.keys().hasAny(['endReason', 'endedAt'])
+          && request.resource.data.diff(resource.data).affectedKeys()
                  .hasOnly([
                    'missedBoardingCount',
                    'lastMissedBoardingAt',
