@@ -20,6 +20,7 @@ class DriverController extends ChangeNotifier {
   List<BusStop> stops = const [];
   bool sharingLocation = false;
   DateTime lastUpdate = DateTime.now();
+  String? selectedDestinationStopId;
 
   DriverController({
     required this.driver,
@@ -28,11 +29,26 @@ class DriverController extends ChangeNotifier {
   })  : _stops = stopRepository,
         _db = db ?? FirebaseFirestore.instance {
     _stopsSub = _stops.watchStops().listen((live) {
-      stops = [...live]
-        ..sort((a, b) => b.waitingCount.compareTo(a.waitingCount));
+      stops = [...live]..sort(_compareDemand);
       lastUpdate = DateTime.now();
       notifyListeners();
     });
+  }
+
+  int relevantDemand(BusStop stop) =>
+      stop.demandForDestination(selectedDestinationStopId);
+
+  int _compareDemand(BusStop a, BusStop b) =>
+      relevantDemand(b).compareTo(relevantDemand(a));
+
+  Future<void> selectDestination(String? stopId) async {
+    selectedDestinationStopId = stopId;
+    stops = [...stops]..sort(_compareDemand);
+    notifyListeners();
+    await _shuttleDoc.set(<String, dynamic>{
+      'servingDestinationStopId': stopId,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
   }
 
   bool isMine(BusStop stop) => stop.enRouteBy == driver.uid;
@@ -81,6 +97,7 @@ class DriverController extends ChangeNotifier {
         'longitude': pos.longitude,
         'heading': pos.heading,
         'speed': pos.speed,
+        'servingDestinationStopId': selectedDestinationStopId,
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true)));
     });
