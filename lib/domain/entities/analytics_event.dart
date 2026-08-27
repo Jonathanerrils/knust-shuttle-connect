@@ -6,6 +6,7 @@ enum AnalyticsEventType {
   waitingCancelled,
   waitingExpired,
   geofenceExited,
+  boardingMissed,
   shuttleEnRoute,
   shuttleArrived,
   boarded,
@@ -15,7 +16,7 @@ enum AnalyticsEventType {
 }
 
 class AnalyticsEvent {
-  static const int currentSchemaVersion = 1;
+  static const int currentSchemaVersion = 2;
 
   final String eventId;
   final AnalyticsEventType type;
