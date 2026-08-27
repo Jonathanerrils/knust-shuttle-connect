@@ -29,7 +29,11 @@ class FirestoreCheckInRepository implements CheckInRepository {
     required BusStop stop,
     required BusStop destination,
   }) {
+    // Firestore auto IDs provide a random journey identifier that can be used
+    // in analytics without exposing the student's Firebase uid.
+    final journeyId = _db.collection('analytics_events').doc().id;
     return _doc(uid).set(<String, dynamic>{
+      'journeyId': journeyId,
       'stopId': stop.id,
       'stopName': stop.name,
       'destinationStopId': destination.id,
