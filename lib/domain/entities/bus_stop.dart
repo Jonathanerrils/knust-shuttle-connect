@@ -5,6 +5,7 @@ class BusStop {
   final double longitude;
   final double geofenceRadiusMeters;
   final int waitingCount;
+  final Map<String, int> destinationDemand;
   final bool active;
   final String? enRouteBy;
   final DateTime? enRouteAt;
@@ -17,6 +18,7 @@ class BusStop {
     required this.longitude,
     required this.geofenceRadiusMeters,
     this.waitingCount = 0,
+    this.destinationDemand = const <String, int>{},
     this.active = true,
     this.enRouteBy,
     this.enRouteAt,
@@ -24,4 +26,9 @@ class BusStop {
   });
 
   bool get hasShuttleEnRoute => enRouteBy != null && arrivedAt == null;
+
+  int demandForDestination(String? destinationStopId) {
+    if (destinationStopId == null) return waitingCount;
+    return destinationDemand[destinationStopId] ?? 0;
+  }
 }
