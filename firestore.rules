@@ -41,18 +41,21 @@ service cloud.firestore {
     }
 
     match /checkins/{uid} {
-      function validCheckIn() {
+      function validActiveCheckIn() {
         return request.resource.data.keys().hasOnly([
                  'journeyId',
                  'stopId', 'stopName',
                  'destinationStopId', 'destinationStopName',
-                 'createdAt', 'updatedAt', 'expiresAt'
+                 'createdAt', 'updatedAt', 'expiresAt',
+                 'missedBoardingCount', 'lastMissedBoardingAt'
                ])
           && request.resource.data.journeyId is string
           && request.resource.data.journeyId.size() >= 12
           && request.resource.data.stopId is string
           && request.resource.data.destinationStopId is string
           && request.resource.data.stopId != request.resource.data.destinationStopId
+          && request.resource.data.missedBoardingCount is int
+          && request.resource.data.missedBoardingCount >= 0
           && exists(/databases/$(database)/documents/stops/$(request.resource.data.stopId))
           && exists(/databases/$(database)/documents/stops/$(request.resource.data.destinationStopId))
           && request.resource.data.expiresAt is timestamp
@@ -60,13 +63,48 @@ service cloud.firestore {
                <= request.time.toMillis() + 30 * 60 * 1000;
       }
 
+      function validTerminalUpdate() {
+        return !resource.data.keys().hasAny(['endReason', 'endedAt'])
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['endReason', 'endedAt', 'updatedAt'])
+          && request.resource.data.endedAt is timestamp
+          && request.resource.data.updatedAt is timestamp
+          && (
+            request.resource.data.endReason == 'boarded'
+            || request.resource.data.endReason == 'cancelled'
+            || request.resource.data.endReason == 'geofenceExited'
+          );
+      }
+
+      function validMissedBoardingUpdate() {
+        return request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly([
+                   'missedBoardingCount',
+                   'lastMissedBoardingAt',
+                   'updatedAt'
+                 ])
+          && request.resource.data.missedBoardingCount
+               == resource.data.missedBoardingCount + 1
+          && request.resource.data.lastMissedBoardingAt is timestamp
+          && request.resource.data.updatedAt is timestamp;
+      }
+
       allow read: if signedIn() && (request.auth.uid == uid || hasRole('admin'));
-      allow create: if signedIn() && request.auth.uid == uid && validCheckIn();
+      allow create: if signedIn()
+        && request.auth.uid == uid
+        && validActiveCheckIn()
+        && request.resource.data.missedBoardingCount == 0;
       allow update: if signedIn()
         && request.auth.uid == uid
-        && validCheckIn()
-        && request.time > resource.data.updatedAt + duration.value(55, 's');
-      allow delete: if signedIn() && request.auth.uid == uid;
+        && (
+          validTerminalUpdate()
+          || validMissedBoardingUpdate()
+          || (validActiveCheckIn()
+              && request.time > resource.data.updatedAt + duration.value(55, 's'))
+        );
+      // Completed/expired records are deleted only by trusted server code after
+      // the terminal outcome has been written to the immutable event stream.
+      allow delete: if false;
     }
 
     match /shuttles/{driverUid} {
