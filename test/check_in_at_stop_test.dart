@@ -8,7 +8,8 @@ class _FakeCheckInRepository implements CheckInRepository {
   BusStop? lastCheckedInStop;
   BusStop? lastDestination;
   String? lastUid;
-  bool cancelled = false;
+  WaitingEndReason? lastEndReason;
+  int missedBoardings = 0;
 
   @override
   Future<void> checkIn({
@@ -22,7 +23,19 @@ class _FakeCheckInRepository implements CheckInRepository {
   }
 
   @override
-  Future<void> cancel(String uid) async => cancelled = true;
+  Future<void> complete({
+    required String uid,
+    required WaitingEndReason reason,
+  }) async {
+    lastUid = uid;
+    lastEndReason = reason;
+  }
+
+  @override
+  Future<void> reportMissedBoarding(String uid) async {
+    lastUid = uid;
+    missedBoardings++;
+  }
 
   @override
   Stream<CheckIn?> watchMyCheckIn(String uid) => const Stream.empty();
@@ -118,6 +131,33 @@ void main() {
     expect(result.isSuccess, isTrue);
   });
 
+  test('check-in entity distinguishes active and terminal state', () {
+    final fresh = CheckIn(
+      studentUid: 'student1',
+      journeyId: 'journey-fresh-001',
+      stopId: stop.id,
+      stopName: stop.name,
+      destinationStopId: destination.id,
+      destinationStopName: destination.name,
+      createdAt: DateTime.now(),
+      expiresAt: DateTime.now().add(const Duration(minutes: 25)),
+    );
+    final boarded = CheckIn(
+      studentUid: 'student1',
+      journeyId: 'journey-boarded-001',
+      stopId: stop.id,
+      stopName: stop.name,
+      destinationStopId: destination.id,
+      destinationStopName: destination.name,
+      createdAt: DateTime.now().subtract(const Duration(minutes: 5)),
+      expiresAt: DateTime.now().add(const Duration(minutes: 20)),
+      endReason: WaitingEndReason.boarded,
+      endedAt: DateTime.now(),
+    );
+    expect(fresh.isActive, isTrue);
+    expect(boarded.isActive, isFalse);
+  });
+
   test('check-in entity reports expiry correctly', () {
     final expired = CheckIn(
       studentUid: 'student1',
@@ -129,17 +169,7 @@ void main() {
       createdAt: DateTime.now().subtract(const Duration(minutes: 30)),
       expiresAt: DateTime.now().subtract(const Duration(minutes: 5)),
     );
-    final fresh = CheckIn(
-      studentUid: 'student1',
-      journeyId: 'journey-fresh-001',
-      stopId: stop.id,
-      stopName: stop.name,
-      destinationStopId: destination.id,
-      destinationStopName: destination.name,
-      createdAt: DateTime.now(),
-      expiresAt: DateTime.now().add(const Duration(minutes: 25)),
-    );
     expect(expired.isExpired, isTrue);
-    expect(fresh.isExpired, isFalse);
+    expect(expired.isActive, isFalse);
   });
 }
