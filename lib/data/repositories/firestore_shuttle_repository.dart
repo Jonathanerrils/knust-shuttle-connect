@@ -33,6 +33,13 @@ class FirestoreShuttleRepository implements ShuttleRepository {
       headingDegrees: (data?['heading'] as num?)?.toDouble(),
       speedMetersPerSecond: (data?['speed'] as num?)?.toDouble(),
       updatedAt: (data?['updatedAt'] as Timestamp?)?.toDate(),
+      servingDestinationStopId:
+          data?['servingDestinationStopId'] as String?,
+      routeId: data?['routeId'] as String?,
+      tripId: data?['tripId'] as String?,
+      routeDirection: data?['routeDirection'] as String?,
+      currentStopSequence:
+          (data?['currentStopSequence'] as num?)?.toInt(),
     );
   }
 }
