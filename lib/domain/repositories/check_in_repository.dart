@@ -10,5 +10,8 @@ abstract class CheckInRepository {
     required BusStop destination,
   });
 
-  Future<void> cancel(String uid);
+  Future<void> complete({
+    required String uid,
+    required WaitingEndReason reason,
+  });
 }
