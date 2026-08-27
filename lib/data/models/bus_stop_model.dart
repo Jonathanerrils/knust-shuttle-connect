@@ -8,6 +8,9 @@ class BusStopModel {
 
   static BusStop fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
     final data = doc.data() ?? const <String, dynamic>{};
+    final rawDemand =
+        (data['destinationDemand'] as Map<String, dynamic>?) ??
+            const <String, dynamic>{};
     return BusStop(
       id: doc.id,
       name: (data['name'] as String?) ?? doc.id,
@@ -16,6 +19,10 @@ class BusStopModel {
       geofenceRadiusMeters: (data['geofenceRadiusMeters'] as num?)?.toDouble() ??
           AppConstants.defaultGeofenceRadiusMeters,
       waitingCount: (data['waitingCount'] as num?)?.toInt() ?? 0,
+      destinationDemand: <String, int>{
+        for (final entry in rawDemand.entries)
+          entry.key: (entry.value as num?)?.toInt() ?? 0,
+      },
       active: (data['active'] as bool?) ?? true,
       enRouteBy: data['enRouteBy'] as String?,
       enRouteAt: (data['enRouteAt'] as Timestamp?)?.toDate(),
