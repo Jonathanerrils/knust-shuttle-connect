@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/theme/app_theme.dart';
 import '../../domain/entities/app_user.dart';
 import '../../domain/entities/bus_stop.dart';
+import '../../domain/entities/occupancy.dart';
 import '../../domain/repositories/stop_repository.dart';
 import '../auth/auth_controller.dart';
 import 'driver_controller.dart';
@@ -127,6 +128,66 @@ class _DriverDashboardViewState extends State<_DriverDashboardView> {
             value: controller.sharingLocation,
             onChanged: (v) => controller.setSharingLocation(v),
           ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+            child: Card(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      'How full is the shuttle?',
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleMedium
+                          ?.copyWith(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Update only while safely stopped. This is an occupancy '
+                      'band, not an exact passenger count.',
+                    ),
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        _OccupancyChoice(
+                          band: OccupancyBand.light,
+                          label: 'Plenty of room',
+                          icon: Icons.event_seat_outlined,
+                          selected: controller.selectedOccupancyBand ==
+                              OccupancyBand.light,
+                        ),
+                        _OccupancyChoice(
+                          band: OccupancyBand.moderate,
+                          label: 'Moderate',
+                          icon: Icons.people_outline,
+                          selected: controller.selectedOccupancyBand ==
+                              OccupancyBand.moderate,
+                        ),
+                        _OccupancyChoice(
+                          band: OccupancyBand.limited,
+                          label: 'Limited',
+                          icon: Icons.groups_2_outlined,
+                          selected: controller.selectedOccupancyBand ==
+                              OccupancyBand.limited,
+                        ),
+                        _OccupancyChoice(
+                          band: OccupancyBand.full,
+                          label: 'Full',
+                          icon: Icons.no_transfer,
+                          selected: controller.selectedOccupancyBand ==
+                              OccupancyBand.full,
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
           const Divider(height: 1),
           Expanded(
             child: controller.stops.isEmpty
@@ -141,6 +202,31 @@ class _DriverDashboardViewState extends State<_DriverDashboardView> {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _OccupancyChoice extends StatelessWidget {
+  final OccupancyBand band;
+  final String label;
+  final IconData icon;
+  final bool selected;
+
+  const _OccupancyChoice({
+    required this.band,
+    required this.label,
+    required this.icon,
+    required this.selected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = context.read<DriverController>();
+    return ChoiceChip(
+      avatar: Icon(icon, size: 18),
+      label: Text(label),
+      selected: selected,
+      onSelected: (_) => controller.reportOccupancy(band),
     );
   }
 }
