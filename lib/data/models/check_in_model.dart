@@ -22,6 +22,9 @@ class CheckInModel {
           ? null
           : WaitingEndReason.values.where((r) => r.name == rawReason).firstOrNull,
       endedAt: (data['endedAt'] as Timestamp?)?.toDate(),
+      missedBoardingCount: (data['missedBoardingCount'] as num?)?.toInt() ?? 0,
+      lastMissedBoardingAt:
+          (data['lastMissedBoardingAt'] as Timestamp?)?.toDate(),
     );
   }
 }
