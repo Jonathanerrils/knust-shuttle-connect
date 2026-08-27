@@ -60,11 +60,15 @@ class _StudentMapScreenState extends State<StudentMapScreen> {
           : assignmentKnown
               ? BitmapDescriptor.hueOrange
               : BitmapDescriptor.hueViolet;
-      final status = compatible
+      final serviceStatus = compatible
           ? 'Compatible with your destination'
           : assignmentKnown
               ? 'Serving another destination'
               : 'Service assignment not confirmed';
+      final occupancy = shuttle.occupancyEstimate();
+      final occupancyText = compatible
+          ? ' · ${occupancy.label} (${occupancy.confidenceLabel} confidence)'
+          : '';
 
       markers.add(Marker(
         markerId: MarkerId('shuttle-${shuttle.id}'),
@@ -72,7 +76,7 @@ class _StudentMapScreenState extends State<StudentMapScreen> {
         icon: BitmapDescriptor.defaultMarkerWithHue(hue),
         infoWindow: InfoWindow(
           title: compatible ? 'Compatible shuttle' : 'Active shuttle',
-          snippet: status,
+          snippet: '$serviceStatus$occupancyText',
         ),
         rotation: shuttle.headingDegrees ?? 0,
       ));
@@ -92,15 +96,23 @@ class _StudentMapScreenState extends State<StudentMapScreen> {
       return 'No currently assigned shuttle is confirmed for your destination.';
     }
 
+    Shuttle? bestShuttle;
     double best = double.infinity;
     for (final shuttle in compatible) {
       final eta = shuttle.etaMinutesTo(stop.latitude, stop.longitude);
-      if (eta < best) best = eta;
+      if (eta < best) {
+        best = eta;
+        bestShuttle = shuttle;
+      }
     }
     final minutes = best.ceil();
+    final occupancy = bestShuttle?.occupancyEstimate();
+    final occupancySuffix = occupancy == null
+        ? ''
+        : ' · ${occupancy.label} (${occupancy.confidenceLabel})';
     return minutes <= 1
-        ? 'A compatible shuttle is about a minute from ${stop.name}'
-        : 'Nearest compatible shuttle is ~$minutes min from ${stop.name}';
+        ? 'Compatible shuttle ~1 min from ${stop.name}$occupancySuffix'
+        : 'Compatible shuttle ~$minutes min from ${stop.name}$occupancySuffix';
   }
 
   @override
