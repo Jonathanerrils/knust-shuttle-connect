@@ -15,6 +15,8 @@ class CheckIn {
   final DateTime expiresAt;
   final WaitingEndReason? endReason;
   final DateTime? endedAt;
+  final int missedBoardingCount;
+  final DateTime? lastMissedBoardingAt;
 
   const CheckIn({
     required this.studentUid,
@@ -27,6 +29,8 @@ class CheckIn {
     required this.expiresAt,
     this.endReason,
     this.endedAt,
+    this.missedBoardingCount = 0,
+    this.lastMissedBoardingAt,
   });
 
   bool get isExpired => DateTime.now().isAfter(expiresAt);
