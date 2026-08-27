@@ -1,5 +1,6 @@
 class CheckIn {
   final String studentUid;
+  final String journeyId;
   final String stopId;
   final String stopName;
   final String destinationStopId;
@@ -9,6 +10,7 @@ class CheckIn {
 
   const CheckIn({
     required this.studentUid,
+    required this.journeyId,
     required this.stopId,
     required this.stopName,
     required this.destinationStopId,
