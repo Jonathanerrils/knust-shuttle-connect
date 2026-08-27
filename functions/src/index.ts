@@ -19,38 +19,55 @@ const BATCH_SIZE = 400;
 
 const stopTopic = (stopId: string) => `stop_${stopId}`;
 
-function stopIdOf(snap: DocumentSnapshot | undefined): string | null {
+type Intent = {
+  stopId: string;
+  destinationStopId: string;
+};
+
+function intentOf(snap: DocumentSnapshot | undefined): Intent | null {
   if (!snap || !snap.exists) return null;
-  return (snap.data()?.stopId as string | undefined) ?? null;
+  const data = snap.data();
+  const stopId = data?.stopId as string | undefined;
+  const destinationStopId = data?.destinationStopId as string | undefined;
+  if (!stopId || !destinationStopId) return null;
+  return { stopId, destinationStopId };
+}
+
+function sameIntent(a: Intent | null, b: Intent | null): boolean {
+  return a?.stopId === b?.stopId &&
+    a?.destinationStopId === b?.destinationStopId;
 }
 
 export const onCheckInWritten = onDocumentWritten(
   "checkins/{uid}",
   async (event) => {
-    const beforeStop = stopIdOf(event.data?.before);
-    const afterStop = stopIdOf(event.data?.after);
-    if (beforeStop === afterStop) return;
+    const before = intentOf(event.data?.before);
+    const after = intentOf(event.data?.after);
+    if (sameIntent(before, after)) return;
 
     const batch = db.batch();
-    if (beforeStop) {
-      batch.set(
-        db.doc(`stops/${beforeStop}`),
-        { waitingCount: FieldValue.increment(-1) },
-        { merge: true }
-      );
+
+    if (before) {
+      batch.update(db.doc(`stops/${before.stopId}`), {
+        waitingCount: FieldValue.increment(-1),
+        [`destinationDemand.${before.destinationStopId}`]:
+          FieldValue.increment(-1),
+      });
     }
-    if (afterStop) {
-      batch.set(
-        db.doc(`stops/${afterStop}`),
-        { waitingCount: FieldValue.increment(1) },
-        { merge: true }
-      );
+
+    if (after) {
+      batch.update(db.doc(`stops/${after.stopId}`), {
+        waitingCount: FieldValue.increment(1),
+        [`destinationDemand.${after.destinationStopId}`]:
+          FieldValue.increment(1),
+      });
+
       const now = new Date();
       const dateKey = now.toISOString().slice(0, 10);
       batch.set(
-        db.doc(`analytics_daily/${afterStop}_${dateKey}`),
+        db.doc(`analytics_daily/${after.stopId}_${dateKey}`),
         {
-          stopId: afterStop,
+          stopId: after.stopId,
           date: dateKey,
           total: FieldValue.increment(1),
           hourly: { [`h${now.getUTCHours()}`]: FieldValue.increment(1) },
@@ -58,6 +75,7 @@ export const onCheckInWritten = onDocumentWritten(
         { merge: true }
       );
     }
+
     await batch.commit();
   }
 );
@@ -121,7 +139,6 @@ export const onStopStatusChanged = onDocumentUpdated(
 
     const enRouteStarted = !before.enRouteBy && after.enRouteBy && !after.arrivedAt;
     const justArrived = !before.arrivedAt && after.arrivedAt;
-
     if (!enRouteStarted && !justArrived) return;
 
     if (justArrived) {
@@ -168,19 +185,33 @@ export const recountWaiting = onSchedule("every day 03:00", async () => {
     db.collection("checkins").get(),
   ]);
 
-  const counts = new Map<string, number>();
+  const totals = new Map<string, number>();
+  const destinationCounts = new Map<string, Map<string, number>>();
+
   checkins.docs.forEach((doc) => {
-    const stopId = doc.data().stopId as string | undefined;
-    if (stopId) counts.set(stopId, (counts.get(stopId) ?? 0) + 1);
+    const data = doc.data();
+    const stopId = data.stopId as string | undefined;
+    const destinationStopId = data.destinationStopId as string | undefined;
+    if (!stopId || !destinationStopId) return;
+
+    totals.set(stopId, (totals.get(stopId) ?? 0) + 1);
+    const byDestination = destinationCounts.get(stopId) ?? new Map<string, number>();
+    byDestination.set(
+      destinationStopId,
+      (byDestination.get(destinationStopId) ?? 0) + 1
+    );
+    destinationCounts.set(stopId, byDestination);
   });
 
   const batch = db.batch();
   stops.docs.forEach((stopDoc) => {
-    const actual = counts.get(stopDoc.id) ?? 0;
-    if ((stopDoc.data().waitingCount ?? 0) !== actual) {
-      batch.update(stopDoc.ref, { waitingCount: actual });
-    }
+    const byDestination = destinationCounts.get(stopDoc.id) ??
+      new Map<string, number>();
+    batch.update(stopDoc.ref, {
+      waitingCount: totals.get(stopDoc.id) ?? 0,
+      destinationDemand: Object.fromEntries(byDestination.entries()),
+    });
   });
   await batch.commit();
-  logger.info("Nightly recount complete");
+  logger.info("Nightly total and destination-demand recount complete");
 });
