@@ -10,6 +10,7 @@ class CheckInModel {
     if (data == null) return null;
     return CheckIn(
       studentUid: doc.id,
+      journeyId: (data['journeyId'] as String?) ?? '',
       stopId: data['stopId'] as String,
       stopName: (data['stopName'] as String?) ?? '',
       destinationStopId: (data['destinationStopId'] as String?) ?? '',
