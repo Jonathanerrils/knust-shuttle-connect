@@ -16,14 +16,11 @@ initializeApp();
 const db = getFirestore();
 
 const BOARDING_GRACE_MINUTES = 5;
-// Expiry processing writes both an analytics event and a delete per check-in.
-// Keep this comfortably below Firestore's 500-write batch ceiling.
 const BATCH_SIZE = 200;
-const EVENT_SCHEMA_VERSION = 1;
+const EVENT_SCHEMA_VERSION = 2;
 
-// First deployment context. These identifiers are data, not architecture:
-// future deployments use their own country/city/network/operator values while
-// retaining the same event schema.
+// First deployment context. Future deployments replace these identifiers while
+// retaining the same event contract.
 const DEPLOYMENT_CONTEXT = {
   countryId: "GH",
   cityId: "kumasi",
@@ -37,6 +34,7 @@ type Intent = {
   journeyId: string | null;
   stopId: string;
   destinationStopId: string;
+  createdAt: Timestamp | null;
 };
 
 function intentOf(snap: DocumentSnapshot | undefined): Intent | null {
@@ -49,7 +47,15 @@ function intentOf(snap: DocumentSnapshot | undefined): Intent | null {
     journeyId: (data?.journeyId as string | undefined) ?? null,
     stopId,
     destinationStopId,
+    createdAt: (data?.createdAt as Timestamp | undefined) ?? null,
   };
+}
+
+function activeIntentOf(snap: DocumentSnapshot | undefined): Intent | null {
+  if (!snap || !snap.exists) return null;
+  const data = snap.data();
+  if (data?.endReason || data?.endedAt) return null;
+  return intentOf(snap);
 }
 
 function sameIntent(a: Intent | null, b: Intent | null): boolean {
@@ -59,6 +65,19 @@ function sameIntent(a: Intent | null, b: Intent | null): boolean {
 
 function sameJourney(a: Intent | null, b: Intent | null): boolean {
   return sameIntent(a, b) && a?.journeyId === b?.journeyId;
+}
+
+function missedBoardingCountOf(snap: DocumentSnapshot | undefined): number {
+  if (!snap || !snap.exists) return 0;
+  return (snap.data()?.missedBoardingCount as number | undefined) ?? 0;
+}
+
+function timestampOf(
+  snap: DocumentSnapshot | undefined,
+  field: string
+): Timestamp | null {
+  if (!snap || !snap.exists) return null;
+  return (snap.data()?.[field] as Timestamp | undefined) ?? null;
 }
 
 function addAnalyticsEvent(
@@ -77,62 +96,157 @@ function addAnalyticsEvent(
   });
 }
 
+function waitSeconds(intent: Intent, endedAt: Timestamp | null): number | null {
+  if (!intent.createdAt || !endedAt) return null;
+  return Math.max(
+    0,
+    Math.round((endedAt.toMillis() - intent.createdAt.toMillis()) / 1000)
+  );
+}
+
+function terminalEventType(reason: string | null): string {
+  switch (reason) {
+    case "boarded":
+      return "boarded";
+    case "cancelled":
+      return "waitingCancelled";
+    case "geofenceExited":
+      return "geofenceExited";
+    case "expired":
+      return "waitingExpired";
+    default:
+      return "waitingEnded";
+  }
+}
+
+function terminalSource(reason: string | null): string {
+  switch (reason) {
+    case "boarded":
+    case "cancelled":
+      return "studentConfirmed";
+    case "geofenceExited":
+    case "expired":
+      return "systemObserved";
+    default:
+      return "unknown";
+  }
+}
+
 export const onCheckInWritten = onDocumentWritten(
   "checkins/{uid}",
   async (event) => {
-    const before = intentOf(event.data?.before);
-    const after = intentOf(event.data?.after);
-    if (sameJourney(before, after)) return;
+    const beforeActive = activeIntentOf(event.data?.before);
+    const afterActive = activeIntentOf(event.data?.after);
+    const afterAny = intentOf(event.data?.after);
+    const terminalReason = event.data?.after.exists
+      ? ((event.data?.after.data()?.endReason as string | undefined) ?? null)
+      : null;
+    const endedAt = timestampOf(event.data?.after, "endedAt");
+    const beforeMissed = missedBoardingCountOf(event.data?.before);
+    const afterMissed = missedBoardingCountOf(event.data?.after);
+
+    const sameActiveJourney = sameJourney(beforeActive, afterActive);
+    const missedIncrease = sameActiveJourney && afterMissed > beforeMissed;
+    if (sameActiveJourney && !missedIncrease) return;
 
     const batch = db.batch();
+    let hasWrites = false;
 
-    if (!sameIntent(before, after)) {
-      if (before) {
-        batch.update(db.doc(`stops/${before.stopId}`), {
+    if (!sameIntent(beforeActive, afterActive)) {
+      if (beforeActive) {
+        batch.update(db.doc(`stops/${beforeActive.stopId}`), {
           waitingCount: FieldValue.increment(-1),
-          [`destinationDemand.${before.destinationStopId}`]:
+          [`destinationDemand.${beforeActive.destinationStopId}`]:
             FieldValue.increment(-1),
         });
+        hasWrites = true;
       }
 
-      if (after) {
-        batch.update(db.doc(`stops/${after.stopId}`), {
+      if (afterActive) {
+        batch.update(db.doc(`stops/${afterActive.stopId}`), {
           waitingCount: FieldValue.increment(1),
-          [`destinationDemand.${after.destinationStopId}`]:
+          [`destinationDemand.${afterActive.destinationStopId}`]:
             FieldValue.increment(1),
         });
 
         const now = new Date();
         const dateKey = now.toISOString().slice(0, 10);
         batch.set(
-          db.doc(`analytics_daily/${after.stopId}_${dateKey}`),
+          db.doc(`analytics_daily/${afterActive.stopId}_${dateKey}`),
           {
-            stopId: after.stopId,
+            stopId: afterActive.stopId,
             date: dateKey,
             total: FieldValue.increment(1),
             hourly: { [`h${now.getUTCHours()}`]: FieldValue.increment(1) },
           },
           { merge: true }
         );
+        hasWrites = true;
       }
     }
 
-    if (before) {
-      addAnalyticsEvent(batch, "waitingEnded", {
-        journeyId: before.journeyId,
-        stopId: before.stopId,
-        destinationStopId: before.destinationStopId,
+    if (beforeActive && !afterActive) {
+      const type = terminalEventType(terminalReason);
+      addAnalyticsEvent(batch, type, {
+        journeyId: beforeActive.journeyId,
+        stopId: beforeActive.stopId,
+        destinationStopId: beforeActive.destinationStopId,
+        endReason: terminalReason ?? "unknown",
+        outcomeSource: terminalSource(terminalReason),
+        waitSeconds: waitSeconds(beforeActive, endedAt ?? Timestamp.now()),
+        missedBoardingCount: beforeMissed,
       });
-    }
-    if (after) {
-      addAnalyticsEvent(batch, "waitingStarted", {
-        journeyId: after.journeyId,
-        stopId: after.stopId,
-        destinationStopId: after.destinationStopId,
-      });
+      hasWrites = true;
+
+      // A terminal update is persisted first so its outcome can be observed by
+      // this trigger. Trusted server code then removes it from the live store.
+      if (event.data?.after.exists && terminalReason) {
+        batch.delete(event.data.after.ref);
+      }
     }
 
-    await batch.commit();
+    if (!beforeActive && afterActive) {
+      addAnalyticsEvent(batch, "waitingStarted", {
+        journeyId: afterActive.journeyId,
+        stopId: afterActive.stopId,
+        destinationStopId: afterActive.destinationStopId,
+      });
+      hasWrites = true;
+    }
+
+    // Replacing an active journey with another active journey should preserve
+    // both sides of the history even if the old and new stops are identical.
+    if (beforeActive && afterActive && !sameJourney(beforeActive, afterActive)) {
+      addAnalyticsEvent(batch, "waitingEnded", {
+        journeyId: beforeActive.journeyId,
+        stopId: beforeActive.stopId,
+        destinationStopId: beforeActive.destinationStopId,
+        endReason: "replaced",
+        outcomeSource: "systemObserved",
+        waitSeconds: waitSeconds(beforeActive, Timestamp.now()),
+        missedBoardingCount: beforeMissed,
+      });
+      addAnalyticsEvent(batch, "waitingStarted", {
+        journeyId: afterActive.journeyId,
+        stopId: afterActive.stopId,
+        destinationStopId: afterActive.destinationStopId,
+      });
+      hasWrites = true;
+    }
+
+    if (missedIncrease && afterAny) {
+      addAnalyticsEvent(batch, "boardingMissed", {
+        journeyId: afterAny.journeyId,
+        stopId: afterAny.stopId,
+        destinationStopId: afterAny.destinationStopId,
+        reportedCount: afterMissed,
+        increment: afterMissed - beforeMissed,
+        outcomeSource: "studentConfirmed",
+      });
+      hasWrites = true;
+    }
+
+    if (hasWrites) await batch.commit();
   }
 );
 
@@ -146,21 +260,23 @@ export const sweepCheckIns = onSchedule("every 5 minutes", async () => {
     .get();
   if (!expired.empty) {
     const batch = db.batch();
+    let marked = 0;
     expired.docs.forEach((doc) => {
-      const intent = intentOf(doc);
-      if (intent) {
-        addAnalyticsEvent(batch, "waitingExpired", {
-          journeyId: intent.journeyId,
-          stopId: intent.stopId,
-          destinationStopId: intent.destinationStopId,
-        });
-      }
-      batch.delete(doc.ref);
+      if (doc.data().endReason || doc.data().endedAt) return;
+      batch.update(doc.ref, {
+        endReason: "expired",
+        endedAt: now,
+        updatedAt: now,
+      });
+      marked++;
     });
-    await batch.commit();
-    logger.info(`Expired ${expired.size} stale check-ins`);
+    if (marked > 0) await batch.commit();
+    logger.info(`Marked ${marked} stale check-ins as expired`);
   }
 
+  // Arrival is a service observation, not proof that every waiting passenger
+  // boarded. Keep unresolved passengers active; only clear the stop's transient
+  // arrival state after the grace window.
   const graceCutoff = Timestamp.fromMillis(
     now.toMillis() - BOARDING_GRACE_MINUTES * 60 * 1000
   );
@@ -169,28 +285,17 @@ export const sweepCheckIns = onSchedule("every 5 minutes", async () => {
     .where("arrivedAt", "<=", graceCutoff)
     .get();
 
-  for (const stopDoc of arrivedStops.docs) {
-    const arrivedAt = stopDoc.data().arrivedAt as Timestamp;
-    const waiting = await db
-      .collection("checkins")
-      .where("stopId", "==", stopDoc.id)
-      .get();
+  if (!arrivedStops.empty) {
     const batch = db.batch();
-    let cleared = 0;
-    waiting.docs.forEach((doc) => {
-      const createdAt = doc.data().createdAt as Timestamp | undefined;
-      if (!createdAt || createdAt.toMillis() <= arrivedAt.toMillis()) {
-        batch.delete(doc.ref);
-        cleared++;
-      }
-    });
-    batch.update(stopDoc.ref, {
-      enRouteBy: null,
-      enRouteAt: null,
-      arrivedAt: null,
+    arrivedStops.docs.forEach((stopDoc) => {
+      batch.update(stopDoc.ref, {
+        enRouteBy: null,
+        enRouteAt: null,
+        arrivedAt: null,
+      });
     });
     await batch.commit();
-    logger.info(`Arrival decay at ${stopDoc.id}: cleared ${cleared}`);
+    logger.info(`Cleared arrival state for ${arrivedStops.size} stops`);
   }
 });
 
@@ -207,13 +312,32 @@ export const onStopStatusChanged = onDocumentUpdated(
     const justArrived = !before.arrivedAt && after.arrivedAt;
     if (!enRouteStarted && !justArrived) return;
 
+    const driverUid = (after.enRouteBy as string | undefined) ?? null;
+    let service: Record<string, unknown> = {};
+    if (driverUid) {
+      const shuttle = await db.doc(`shuttles/${driverUid}`).get();
+      if (shuttle.exists) {
+        const data = shuttle.data() ?? {};
+        service = {
+          routeId: (data.routeId as string | undefined) ?? null,
+          serviceTripId: (data.tripId as string | undefined) ?? null,
+          routeDirection: (data.routeDirection as string | undefined) ?? null,
+          servingDestinationStopId:
+            (data.servingDestinationStopId as string | undefined) ?? null,
+          currentStopSequence:
+            (data.currentStopSequence as number | undefined) ?? null,
+        };
+      }
+    }
+
     const batch = db.batch();
 
     if (enRouteStarted) {
       addAnalyticsEvent(batch, "shuttleEnRoute", {
-        vehicleId: (after.enRouteBy as string | undefined) ?? null,
+        vehicleId: driverUid,
         stopId,
         waitingCount: (after.waitingCount as number | undefined) ?? 0,
+        ...service,
       });
     }
 
@@ -222,17 +346,19 @@ export const onStopStatusChanged = onDocumentUpdated(
       batch.set(tripRef, {
         stopId,
         stopName,
-        driverUid: (after.enRouteBy as string | undefined) ?? null,
+        driverUid,
         enRouteAt: after.enRouteAt ?? null,
         arrivedAt: after.arrivedAt,
         waitingAtArrival: (after.waitingCount as number | undefined) ?? 0,
         createdAt: FieldValue.serverTimestamp(),
+        ...service,
       });
       addAnalyticsEvent(batch, "shuttleArrived", {
         tripId: tripRef.id,
-        vehicleId: (after.enRouteBy as string | undefined) ?? null,
+        vehicleId: driverUid,
         stopId,
         waitingAtArrival: (after.waitingCount as number | undefined) ?? 0,
+        ...service,
       });
     }
 
@@ -245,7 +371,7 @@ export const onStopStatusChanged = onDocumentUpdated(
     const message = justArrived
       ? {
           title: `Shuttle arrived at ${stopName}`,
-          body: "Did you board? Open the app and tap ‘I boarded’ — otherwise you’ll be removed from the queue in 5 minutes.",
+          body: "Did you board? Tap ‘I boarded’. If the shuttle was full, report ‘Couldn’t board’ and you’ll remain in the queue.",
         }
       : {
           title: "Shuttle on the way 🚌",
@@ -275,6 +401,7 @@ export const recountWaiting = onSchedule("every day 03:00", async () => {
 
   checkins.docs.forEach((doc) => {
     const data = doc.data();
+    if (data.endReason || data.endedAt) return;
     const stopId = data.stopId as string | undefined;
     const destinationStopId = data.destinationStopId as string | undefined;
     if (!stopId || !destinationStopId) return;
