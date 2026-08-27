@@ -120,6 +120,20 @@ class StudentController extends ChangeNotifier {
   List<Shuttle> get assignmentUnknownShuttles =>
       shuttles.where((shuttle) => !shuttle.hasServiceAssignment).toList();
 
+  bool get compatibleShuttleEnRouteToMyStop {
+    final stop = checkedInStop;
+    final driverId = stop?.enRouteBy;
+    if (stop == null || driverId == null || stop.arrivedAt != null) return false;
+    return compatibleShuttles.any((shuttle) => shuttle.id == driverId);
+  }
+
+  bool get compatibleShuttleAtMyStop {
+    final stop = checkedInStop;
+    final driverId = stop?.enRouteBy;
+    if (stop == null || driverId == null || stop.arrivedAt == null) return false;
+    return compatibleShuttles.any((shuttle) => shuttle.id == driverId);
+  }
+
   Future<void> _init() async {
     stops = await _stops.getCachedStops();
     stopsUpdatedAt = await _stops.lastCacheTime();
@@ -212,7 +226,7 @@ class StudentController extends ChangeNotifier {
 
   Future<String?> _completeWaiting(WaitingEndReason reason) async {
     final current = myCheckIn;
-    if (current == null) return null;
+    if (current == null || workingOnCheckIn) return null;
     workingOnCheckIn = true;
     notifyListeners();
     try {
@@ -228,14 +242,17 @@ class StudentController extends ChangeNotifier {
   }
 
   Future<String?> reportMissedBoarding() async {
-    if (myCheckIn == null) return null;
+    if (myCheckIn == null || workingOnCheckIn) return null;
+    if (!compatibleShuttleAtMyStop) {
+      return 'A compatible shuttle arrival has not been confirmed at this stop.';
+    }
     workingOnCheckIn = true;
     notifyListeners();
     try {
       await _checkIns.reportMissedBoarding(student.uid);
       return null;
     } catch (e) {
-      return 'Could not record that the shuttle was full. ($e)';
+      return 'Could not record the missed boarding. ($e)';
     } finally {
       workingOnCheckIn = false;
       notifyListeners();
