@@ -137,7 +137,7 @@ class _NotCheckedIn extends StatelessWidget {
           Text('${nearest.waitingCount} people currently checked in here'),
         const SizedBox(height: 18),
         DropdownButtonFormField<String>(
-          value: destination?.id,
+          initialValue: destination?.id,
           decoration: const InputDecoration(
             labelText: 'Where are you going?',
             border: OutlineInputBorder(),
