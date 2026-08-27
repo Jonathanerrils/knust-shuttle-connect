@@ -235,9 +235,9 @@ class _CheckedIn extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final checkIn = controller.myCheckIn!;
-    final liveStop = controller.checkedInStop;
     final compatible = controller.compatibleShuttles.length;
-    final shuttleAtStop = liveStop?.arrivedAt != null;
+    final compatibleEnRoute = controller.compatibleShuttleEnRouteToMyStop;
+    final compatibleAtStop = controller.compatibleShuttleAtMyStop;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -266,23 +266,23 @@ class _CheckedIn extends StatelessWidget {
           textAlign: TextAlign.center,
           style: Theme.of(context).textTheme.bodyMedium,
         ),
-        if (liveStop != null && liveStop.hasShuttleEnRoute) ...[
+        if (compatibleEnRoute) ...[
           const SizedBox(height: 10),
           Chip(
             avatar: const Icon(Icons.directions_bus, size: 18),
             label: Text(controller.etaMinutesToMyStop == null
-                ? 'A shuttle is on its way to this stop'
+                ? 'A compatible shuttle is on its way to this stop'
                 : 'Compatible shuttle ~${controller.etaMinutesToMyStop} min away'),
           ),
         ],
-        if (shuttleAtStop) ...[
+        if (compatibleAtStop) ...[
           const SizedBox(height: 12),
           Card(
             child: Padding(
               padding: const EdgeInsets.all(14),
               child: Column(
                 children: [
-                  const Text('A shuttle has arrived. Did you get on?',
+                  const Text('Your compatible shuttle has arrived. Did you get on?',
                       textAlign: TextAlign.center,
                       style: TextStyle(fontWeight: FontWeight.bold)),
                   const SizedBox(height: 10),
