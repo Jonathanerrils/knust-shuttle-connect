@@ -2,6 +2,7 @@ import 'transport_context.dart';
 
 enum AnalyticsEventType {
   waitingStarted,
+  waitingEnded,
   waitingCancelled,
   waitingExpired,
   geofenceExited,
