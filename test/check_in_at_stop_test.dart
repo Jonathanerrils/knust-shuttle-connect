@@ -121,6 +121,7 @@ void main() {
   test('check-in entity reports expiry correctly', () {
     final expired = CheckIn(
       studentUid: 'student1',
+      journeyId: 'journey-expired-001',
       stopId: stop.id,
       stopName: stop.name,
       destinationStopId: destination.id,
@@ -130,6 +131,7 @@ void main() {
     );
     final fresh = CheckIn(
       studentUid: 'student1',
+      journeyId: 'journey-fresh-001',
       stopId: stop.id,
       stopName: stop.name,
       destinationStopId: destination.id,
