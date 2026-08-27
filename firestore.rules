@@ -1,16 +1,8 @@
 rules_version = '2';
 
 // KNUST Shuttle Connect — Firestore security rules.
-//
-// Trust model:
-//  - waitingCount on stops is maintained ONLY by Cloud Functions (Admin SDK
-//    bypasses these rules); no client can write it.
-//  - Students can only create/replace/delete THEIR OWN check-in (doc id ==
-//    their uid), which also structurally enforces one active check-in.
-//  - Drivers may only touch the en-route fields on stops, and their own
-//    shuttle-position doc. Only admins edit stop definitions.
-//  - Privacy: drivers get no read access to checkins, so student identity
-//    is never exposed — drivers only ever see aggregate counts on stops.
+// Drivers never read student check-ins; destination demand is exposed only as
+// aggregate counters maintained by trusted Cloud Functions on stop documents.
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -50,10 +42,16 @@ service cloud.firestore {
 
     match /checkins/{uid} {
       function validCheckIn() {
-        return request.resource.data.keys().hasOnly(
-                 ['stopId', 'stopName', 'createdAt', 'updatedAt', 'expiresAt'])
+        return request.resource.data.keys().hasOnly([
+                 'stopId', 'stopName',
+                 'destinationStopId', 'destinationStopName',
+                 'createdAt', 'updatedAt', 'expiresAt'
+               ])
           && request.resource.data.stopId is string
+          && request.resource.data.destinationStopId is string
+          && request.resource.data.stopId != request.resource.data.destinationStopId
           && exists(/databases/$(database)/documents/stops/$(request.resource.data.stopId))
+          && exists(/databases/$(database)/documents/stops/$(request.resource.data.destinationStopId))
           && request.resource.data.expiresAt is timestamp
           && request.resource.data.expiresAt.toMillis()
                <= request.time.toMillis() + 30 * 60 * 1000;
